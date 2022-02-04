@@ -91,24 +91,28 @@ class Ghost {
  public:
   static void InitCore();
 
-  static int Null(const bool lookup_enclave) {
-    return syscall(__NR_ghost, GHOST_NULL, lookup_enclave, gbl_ctl_fd_);
-  }
-
   static int Run(const Gtid gtid, const uint32_t agent_barrier,
                  const uint32_t task_barrier, const int cpu, const int flags) {
     return syscall(__NR_ghost_run, gtid.id(), agent_barrier, task_barrier, cpu,
                    flags);
   }
 
-  static int SyncCommit(const cpu_set_t& cpuset) {
-    return syscall(__NR_ghost, GHOST_SYNC_GROUP_TXN, &cpuset, sizeof(cpu_set_t),
-                   /*flags=*/0);
+  static int SyncCommit(cpu_set_t* const cpuset) {
+    ghost_ioc_commit_txn data = {
+        .mask_ptr = cpuset,
+        .mask_len = sizeof(cpu_set_t),
+        .flags = 0,
+    };
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_SYNC_GROUP_TXN, &data);
   }
 
-  static int Commit(const cpu_set_t& cpuset) {
-    return syscall(__NR_ghost, GHOST_COMMIT_TXN, &cpuset, sizeof(cpu_set_t),
-                   /*flags=*/0);
+  static int Commit(cpu_set_t* const cpuset) {
+    ghost_ioc_commit_txn data = {
+        .mask_ptr = cpuset,
+        .mask_len = sizeof(cpu_set_t),
+        .flags = 0,
+    };
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_COMMIT_TXN, &data);
   }
 
   static int Commit(const int cpu) {
@@ -119,20 +123,19 @@ class Ghost {
 
     CPU_ZERO(&cpuset);
     CPU_SET(cpu, &cpuset);
-    return Commit(cpuset);
-  }
-
-  enum class GhostOption {};
-  static int SetOption1(const GhostOption option, const int64_t val) {
-    int rc = syscall(__NR_ghost, GHOST_SET_OPTION, option, val);
-    CHECK_EQ(rc, 0);  // No false negatives on option setting.
-    return rc;
+    return Commit(&cpuset);
   }
 
   static int CreateQueue(const int elems, const int node, const int flags,
-                         uint64_t* const mapsize) {
-    return syscall(__NR_ghost, GHOST_CREATE_QUEUE, elems, node, flags, mapsize,
-                   gbl_ctl_fd_);
+                         uint64_t& mapsize) {
+    ghost_ioc_create_queue data = {
+        .elems = elems,
+        .node = node,
+        .flags = flags,
+    };
+    int fd = ioctl(gbl_ctl_fd_, GHOST_IOC_CREATE_QUEUE, &data);
+    mapsize = data.mapsize;
+    return fd;
   }
 
   // Configure the set of candidate cpus to wake up when a message is produced
@@ -152,8 +155,16 @@ class Ghost {
       }
     }
 
-    return syscall(__NR_ghost, GHOST_CONFIG_QUEUE_WAKEUP, queue_fd,
-                   wakeup.data(), wakeup.size(), flags);
+    int ninfo = wakeup.size();
+
+    ghost_ioc_config_queue_wakeup data = {
+        .qfd = queue_fd,
+        .w = wakeup.data(),
+        .ninfo = ninfo,
+        .flags = flags,
+    };
+
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_CONFIG_QUEUE_WAKEUP, &data);
   }
 
   static int AssociateQueue(const int queue_fd, const ghost_type type,
@@ -163,12 +174,28 @@ class Ghost {
         .type = type,
         .arg = arg,
     };
-    return syscall(__NR_ghost, GHOST_ASSOCIATE_QUEUE, queue_fd, &msg_src,
-                   barrier, flags, status);
+
+    ghost_ioc_assoc_queue data = {
+        .fd = queue_fd,
+        .src = msg_src,
+        .barrier = barrier,
+        .flags = flags,
+    };
+
+    int err = ioctl(gbl_ctl_fd_, GHOST_IOC_ASSOC_QUEUE, &data);
+
+    if (status != nullptr) {
+      *status = data.status;
+    }
+    return err;
   }
 
   static int SetDefaultQueue(const int queue_fd) {
-    return syscall(__NR_ghost, GHOST_SET_DEFAULT_QUEUE, queue_fd);
+    ghost_ioc_set_default_queue data = {
+        .fd = queue_fd,
+    };
+
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_SET_DEFAULT_QUEUE, &data);
   }
 
   static int GetStatusWordInfo(const ghost_type type, const uint64_t arg,
@@ -191,11 +218,12 @@ class Ghost {
   // closure. We want to update the runtime of the task so that we don't bill
   // the new closure for CPU time used by the old closure.
   static int GetTaskRuntime(const Gtid gtid, absl::Duration* const cpu_time) {
-    uint64_t raw_time;
-    const int ret =
-        syscall(__NR_ghost, GHOST_GET_CPU_TIME, gtid.id(), &raw_time);
+    ghost_ioc_get_cpu_time data = {
+        .gtid = gtid.id(),
+    };
+    const int ret = ioctl(gbl_ctl_fd_, GHOST_IOC_GET_CPU_TIME, &data);
     if (ret == 0) {
-      *cpu_time = absl::Nanoseconds(raw_time);
+      *cpu_time = absl::Nanoseconds(data.runtime);
     }
     return ret;
   }
@@ -215,8 +243,14 @@ class Ghost {
         .flags = cpu.valid() ? TIMERFD_GHOST_ENABLED : 0,
         .cookie = cookie,
     };
-    return syscall(__NR_ghost, GHOST_TIMERFD_SETTIME, fd, flags, itimerspec,
-                   NULL, &timerfd_ghost);
+    ghost_ioc_timerfd_settime data = {
+        .timerfd = fd,
+        .flags = flags,
+        .in_tmr = itimerspec,
+        .out_tmr = NULL,
+        .timerfd_ghost = timerfd_ghost,
+    };
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_TIMERFD_SETTIME, &data);
   }
 
   static bool GhostIsMountedAt(const char* path);
