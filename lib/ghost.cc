@@ -124,15 +124,19 @@ bool Ghost::GhostIsMountedAt(const char* path) {
   bool ret = false;
   FILE* mounts = setmntent("/proc/self/mounts", "r");
   CHECK_NE(mounts, nullptr);
-
+  //printf("\n Try to check the content of some variables !! \n");
   struct mntent* ent;
   while ((ent = getmntent(mounts))) {
-    if (!strcmp(Ghost::kGhostfsMount, ent->mnt_dir) &&
-        !strcmp("ghost", ent->mnt_type)) {
+    //printf("\n %s  kGhostfsMount ====> %s  ent->mnt_dir  AND  ghost ====> %s\n ", Ghost::kGhostfsMount, ent->mnt_dir, ent->mnt_type);
+    if (!strcmp(Ghost::kGhostfsMount, ent->mnt_dir) && !strcmp("ghost", ent->mnt_type)) {
+      //printf("\n %s    :   %s  \n", ent->mnt_dir, ent->mnt_type);
       ret = true;
       break;
     }
   }
+  /*if(ret){
+     printf("\n %d Ghostfs is mounted  \n", ret);
+  }*/
   endmntent(mounts);
   return ret;
 }
@@ -177,7 +181,7 @@ void Ghost::InitCore() {
   GhostSignals::Init();
 
   // Some of the tests don't have agents, but they call InitCore()
-  CheckVersion();
+  //CheckVersion();
 
   // We make assumptions around MAX_CPUS being a power of 2 in Topology.
   static_assert((MAX_CPUS & (MAX_CPUS - 1)) == 0);

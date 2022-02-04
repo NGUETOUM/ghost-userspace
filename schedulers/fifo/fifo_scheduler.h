@@ -106,6 +106,8 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
 
   static constexpr int kDebugRunqueue = 1;
 
+  void DumpAllTasks();
+
  protected:
   void TaskNew(FifoTask* task, const Message& msg) final;
   void TaskRunnable(FifoTask* task, const Message& msg) final;
@@ -123,7 +125,7 @@ class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
   void TaskOnCpu(FifoTask* task, Cpu cpu);
   void Migrate(FifoTask* task, Cpu cpu, StatusWord::BarrierToken seqnum);
   Cpu AssignCpu(FifoTask* task);
-  void DumpAllTasks();
+
 
   struct CpuState {
     FifoTask* current = nullptr;

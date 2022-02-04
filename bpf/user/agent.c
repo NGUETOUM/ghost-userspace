@@ -30,6 +30,17 @@
 #include "bpf/user/ghost_bpf.skel.h"
 #include "third_party/iovisor_bcc/trace_helpers.h"
 
+
+enum {
+  //BPF_PROG_TYPE_GHOST_SCHED = 35,
+  BPF_PROG_TYPE_GHOST_MSG,
+
+  //BPF_GHOST_SCHED_SKIP_TICK = 50,
+  //BPF_GHOST_SCHED_PNT,
+  BPF_GHOST_MSG_SEND,
+  BPF_GHOST_MAX_ATTACH_TYPE = 52,  // __MAX_BPF_ATTACH_TYPE
+};
+
 // The ghost_bpf object and its cpu_data mmap is our set of
 // "scheduler-independent" BPF programs.  Right now, we have a generic one that
 // controls whether the kernel generates a timer tick message.

@@ -34,9 +34,9 @@ FifoScheduler::FifoScheduler(Enclave* enclave, CpuList cpulist,
 }
 
 void FifoScheduler::DumpAllTasks() {
-  fprintf(stderr, "task        state   cpu\n");
+  fprintf(stderr, "\ntask        state        cpu\n");
   allocator()->ForEachTask([](Gtid gtid, const FifoTask* task) {
-    absl::FPrintF(stderr, "%-12s%-8d%-8d%c%c\n", gtid.describe(),
+    absl::FPrintF(stderr, "%-12s  %-8d   %-8d    %c    %c\n", gtid.describe(),
                   task->run_state, task->cpu, task->preempted ? 'P' : '-',
                   task->prio_boost ? 'B' : '-');
     return true;
@@ -96,6 +96,7 @@ void FifoScheduler::Migrate(FifoTask* task, Cpu cpu,
 
   GHOST_DPRINT(3, stderr, "Migrating task %s to cpu %d", task->gtid.describe(),
                cpu.id());
+  absl::FPrintF(stderr, "\n Migrating task %s to cpu %d \n", task->gtid.describe(), cpu.id());
   task->cpu = cpu.id();
 
   // Make task visible in the new runqueue *after* changing the association
@@ -384,8 +385,9 @@ void FifoAgent::AgentThread() {
 
   while (!Finished() || !scheduler_->Empty(cpu())) {
     scheduler_->Schedule(cpu(), status_word());
-
-    if (verbose() && debug_out.Edge()) {
+    scheduler_->debug_runqueue_ = false;
+    scheduler_->DumpAllTasks();
+    /*if (verbose() && debug_out.Edge()) {
       static const int flags = verbose() > 1 ? Scheduler::kDumpStateEmptyRQ : 0;
       if (scheduler_->debug_runqueue_) {
         scheduler_->debug_runqueue_ = false;
@@ -393,8 +395,9 @@ void FifoAgent::AgentThread() {
       } else {
         scheduler_->DumpState(cpu(), flags);
       }
-    }
+    }*/
   }
+
 }
 
 std::ostream& operator<<(std::ostream& os, const FifoTaskState& state) {

@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 // From include/uapi/linux/bpf.h for the ghost kernel.
-
+/*
 struct bpf_ghost_sched {};
 
 enum {
@@ -39,6 +39,9 @@ enum {
   BPF_GHOST_MSG_SEND,
   BPF_GHOST_MAX_ATTACH_TYPE,  // __MAX_BPF_ATTACH_TYPE
 };
+*/
+
+#define BPF_GHOST_SCHED_MAX_ATTACH_TYPE __MAX_BPF_ATTACH_TYPE
 
 // end include/uapi/linux/bpf.h
 

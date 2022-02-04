@@ -170,12 +170,18 @@ void LocalEnclave::ForEachTaskStatusWord(
 // file in whichever enclave directory we get.
 // static
 int LocalEnclave::MakeNextEnclave() {
+
+  if(Ghost::GhostIsMountedAt(Ghost::kGhostfsMount) != 1){
+     Ghost::MountGhostfs();
+  }
+
   int top_ctl =
       open(absl::StrCat(Ghost::kGhostfsMount, "/ctl").c_str(), O_WRONLY);
   if (top_ctl < 0) {
     return -1;
   }
-  int id = 1;
+
+  int id;
 
   while (true) {
     std::string cmd = absl::StrCat("create ", id);

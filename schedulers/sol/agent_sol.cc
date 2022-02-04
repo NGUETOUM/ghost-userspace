@@ -26,8 +26,8 @@
 #include "lib/topology.h"
 #include "schedulers/sol/sol_scheduler.h"
 
-ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
-ABSL_FLAG(int32_t, globalcpu, -1,
+ABSL_FLAG(std::string, ghost_cpus, "0-3", "cpulist");
+ABSL_FLAG(int32_t, globalcpu, 0,
           "Global cpu. If -1, then defaults to the first cpu in <cpus>");
 
 namespace ghost {

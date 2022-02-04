@@ -24,10 +24,10 @@
 #include "lib/topology.h"
 #include "schedulers/shinjuku/shinjuku_scheduler.h"
 
-ABSL_FLAG(int32_t, firstcpu, 1, "First cpu to start scheduling from.");
+ABSL_FLAG(int32_t, firstcpu, 0, "First cpu to start scheduling from.");
 ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to <firstcpu>)");
-ABSL_FLAG(int32_t, ncpus, 5, "Schedule on <ncpus> starting from <firstcpu>");
+ABSL_FLAG(int32_t, ncpus, 4, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 ABSL_FLAG(absl::Duration, preemption_time_slice, absl::Microseconds(50),
           "Shinjuku preemption time slice");

@@ -24,10 +24,10 @@
 #include "lib/topology.h"
 #include "schedulers/edf/edf_scheduler.h"
 
-ABSL_FLAG(int32_t, firstcpu, 1, "First cpu to start scheduling from.");
+ABSL_FLAG(int32_t, firstcpu, 0, "First cpu to start scheduling from.");
 ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to <firstcpu>)");
-ABSL_FLAG(int32_t, ncpus, 5, "Schedule on <ncpus> starting from <firstcpu>");
+ABSL_FLAG(int32_t, ncpus, 4, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(bool, ticks, false, "Generate cpu tick messages");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 

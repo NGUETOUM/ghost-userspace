@@ -22,8 +22,8 @@
 #include "lib/enclave.h"
 #include "schedulers/fifo/fifo_scheduler.h"
 
-ABSL_FLAG(int32_t, firstcpu, 1, "First cpu to start scheduling from.");
-ABSL_FLAG(int32_t, ncpus, 5, "Schedule on <ncpus> starting from <firstcpu>");
+ABSL_FLAG(int32_t, firstcpu, 3, "First cpu to start scheduling from.");
+ABSL_FLAG(int32_t, ncpus, 1, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 
 namespace ghost {
@@ -37,7 +37,7 @@ static void ParseAgentConfig(AgentConfig* config) {
   CHECK_GE(firstcpu, 0);
 
   int lastcpu = firstcpu + ncpus - 1;
-  CHECK_LT(lastcpu, ghost::MachineTopology()->num_cpus());
+  //CHECK_LT(lastcpu, ghost::MachineTopology()->num_cpus());
 
   std::vector<int> all_cpus_v;
   for (int c = firstcpu; c <= lastcpu; c++) {

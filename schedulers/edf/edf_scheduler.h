@@ -28,6 +28,16 @@
 #include "schedulers/edf/orchestrator.h"
 #include "shared/prio_table.h"
 
+enum {
+  //BPF_PROG_TYPE_GHOST_SCHED = 35,
+  BPF_PROG_TYPE_GHOST_MSG,
+
+  //BPF_GHOST_SCHED_SKIP_TICK = 50,
+  //BPF_GHOST_SCHED_PNT,
+  BPF_GHOST_MSG_SEND
+  //BPF_GHOST_MAX_ATTACH_TYPE,  // __MAX_BPF_ATTACH_TYPE
+};
+
 namespace ghost {
 
 class Orchestrator;
