@@ -124,19 +124,14 @@ bool Ghost::GhostIsMountedAt(const char* path) {
   bool ret = false;
   FILE* mounts = setmntent("/proc/self/mounts", "r");
   CHECK_NE(mounts, nullptr);
-  //printf("\n Try to check the content of some variables !! \n");
   struct mntent* ent;
   while ((ent = getmntent(mounts))) {
-    //printf("\n %s  kGhostfsMount ====> %s  ent->mnt_dir  AND  ghost ====> %s\n ", Ghost::kGhostfsMount, ent->mnt_dir, ent->mnt_type);
     if (!strcmp(Ghost::kGhostfsMount, ent->mnt_dir) && !strcmp("ghost", ent->mnt_type)) {
-      //printf("\n %s    :   %s  \n", ent->mnt_dir, ent->mnt_type);
       ret = true;
       break;
     }
   }
-  /*if(ret){
-     printf("\n %d Ghostfs is mounted  \n", ret);
-  }*/
+
   endmntent(mounts);
   return ret;
 }

@@ -55,7 +55,7 @@ void ParseSolConfig(SolConfig* config) {
 
 int main(int argc, char* argv[]) {
   absl::InitializeSymbolizer(argv[0]);
-
+  ghost::set_verbose(1);
   absl::ParseCommandLine(argc, argv);
 
   ghost::SolConfig config;

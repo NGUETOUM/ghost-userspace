@@ -29,7 +29,7 @@ ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to <firstcpu>)");
 ABSL_FLAG(int32_t, ncpus, 4, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
-ABSL_FLAG(absl::Duration, preemption_time_slice, absl::Microseconds(50),
+ABSL_FLAG(absl::Duration, preemption_time_slice, absl::Microseconds(150),
           "Shinjuku preemption time slice");
 
 namespace ghost {

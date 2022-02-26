@@ -171,10 +171,6 @@ void LocalEnclave::ForEachTaskStatusWord(
 // static
 int LocalEnclave::MakeNextEnclave() {
 
-  if(Ghost::GhostIsMountedAt(Ghost::kGhostfsMount) != 1){
-     Ghost::MountGhostfs();
-  }
-
   int top_ctl =
       open(absl::StrCat(Ghost::kGhostfsMount, "/ctl").c_str(), O_WRONLY);
   if (top_ctl < 0) {

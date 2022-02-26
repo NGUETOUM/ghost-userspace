@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "schedulers/shinjuku/shinjuku_scheduler.h"
+#include "schedulers/shinjuku/shinjuku_orchestrator.h"
 
 #include "absl/strings/str_format.h"
 
@@ -71,10 +72,10 @@ bool ShinjukuScheduler::Available(const Cpu& cpu) {
 }
 
 void ShinjukuScheduler::DumpAllTasks() {
-  fprintf(stderr, "task        state       rq_pos  P\n");
+  fprintf(stderr, "task        state     cpu  P\n");
   allocator()->ForEachTask([](Gtid gtid, const ShinjukuTask* task) {
-    absl::FPrintF(stderr, "%-12s%-12s%c\n", gtid.describe(),
-                  ShinjukuTask::RunStateToString(task->run_state),
+    absl::FPrintF(stderr, "%-12s%-12s%-2d %c\n", gtid.describe(),
+                  ShinjukuTask::RunStateToString(task->run_state), task->cpu,
                   task->prio_boost ? 'P' : '-');
     return true;
   });
@@ -881,9 +882,9 @@ void ShinjukuAgent::AgentThread() {
     if (cpu().id() != global_scheduler_->GetGlobalCPUId()) {
       RunRequest* req = enclave()->GetRunRequest(cpu());
 
-      if (verbose() > 1) {
+    /*  if (verbose() > 1) {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
-      }
+      }*/
       req->LocalYield(agent_barrier, /*flags=*/0);
     } else {
       if (boosted_priority()) {
@@ -906,10 +907,11 @@ void ShinjukuAgent::AgentThread() {
       global_scheduler_->UpdateSchedParams();
 
       global_scheduler_->GlobalSchedule(status_word(), agent_barrier);
-
       if (verbose() && debug_out.Edge()) {
         static const int flags =
             verbose() > 1 ? Scheduler::kDumpStateEmptyRQ : 0;
+            global_scheduler_->debug_runqueue_ = true;
+
         if (global_scheduler_->debug_runqueue_) {
           global_scheduler_->debug_runqueue_ = false;
           global_scheduler_->DumpState(cpu(), Scheduler::kDumpAllTasks);

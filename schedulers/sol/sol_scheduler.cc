@@ -59,7 +59,7 @@ void SolScheduler::ValidatePreExitState() {
 }
 
 void SolScheduler::DumpAllTasks() {
-  fprintf(stderr, "task        state       rq_pos  P\n");
+  fprintf(stderr, "task        state       cpu  P\n");
   allocator()->ForEachTask([](Gtid gtid, const SolTask* task) {
     absl::FPrintF(stderr, "%-12s%-12s%d\n", gtid.describe(),
                   SolTask::RunStateToString(task->run_state),
@@ -541,9 +541,9 @@ void SolAgent::AgentThread() {
     if (cpu().id() != global_scheduler_->GetGlobalCPUId()) {
       RunRequest* req = enclave()->GetRunRequest(cpu());
 
-      if (verbose() > 1) {
+      /*if (verbose() > 1) {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
-      }
+      }*/
       req->LocalYield(agent_barrier, /*flags=*/0);
     } else {
       if (boosted_priority() &&
@@ -566,6 +566,7 @@ void SolAgent::AgentThread() {
       if (verbose() && debug_out.Edge()) {
         static const int flags =
             verbose() > 1 ? Scheduler::kDumpStateEmptyRQ : 0;
+        global_scheduler_->debug_runqueue_ = true;
         if (global_scheduler_->debug_runqueue_) {
           global_scheduler_->debug_runqueue_ = false;
           global_scheduler_->DumpState(cpu(), Scheduler::kDumpAllTasks);

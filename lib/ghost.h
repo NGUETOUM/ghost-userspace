@@ -310,7 +310,7 @@ class Ghost {
     return sched_setaffinity(gtid.tid(), sizeof(cpuset), &cpuset);
   }
 
-  static constexpr const char kGhostfsMount[] = "/sys/fs/ghost"; /*"/home/armel/ghost_shed";*/
+  static constexpr const char kGhostfsMount[] = "/sys/fs/ghost";
 
  private:
   static int gbl_ctl_fd_;

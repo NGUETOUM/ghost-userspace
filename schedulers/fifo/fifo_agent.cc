@@ -22,8 +22,8 @@
 #include "lib/enclave.h"
 #include "schedulers/fifo/fifo_scheduler.h"
 
-ABSL_FLAG(int32_t, firstcpu, 3, "First cpu to start scheduling from.");
-ABSL_FLAG(int32_t, ncpus, 1, "Schedule on <ncpus> starting from <firstcpu>");
+ABSL_FLAG(int32_t, firstcpu, 0, "First cpu to start scheduling from.");
+ABSL_FLAG(int32_t, ncpus, 4, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 
 namespace ghost {

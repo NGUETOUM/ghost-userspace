@@ -827,3 +827,15 @@ cc_test(
         "@com_google_googletest//:gtest",
     ],
 )
+
+cc_binary(
+    name = "shinjuku_test",
+    srcs = ["tests/shinjuku_test.cc"],
+    copts = compiler_flags,
+    deps = [
+    ":base",
+        ":experiments_shared",
+        "@com_google_absl//absl/synchronization",
+    ],
+
+)
