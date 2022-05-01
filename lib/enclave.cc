@@ -22,6 +22,7 @@
 #include <regex>  // NOLINT: no RE2; ghost limits itself to absl
 
 #include "absl/base/attributes.h"
+#include "absl/strings/numbers.h"
 #include "bpf/user/agent.h"
 #include "kernel/ghost_uapi.h"
 #include "lib/agent.h"
@@ -157,7 +158,7 @@ std::string ReadString(int fd) {
 }
 
 void LocalEnclave::ForEachTaskStatusWord(
-    const std::function<void(struct ghost_status_word* sw, uint32_t region_id,
+    const std::function<void(ghost_status_word* sw, uint32_t region_id,
                              uint32_t idx)>
         l) {
   // TODO: Need to support more than one SW region.
@@ -180,7 +181,7 @@ int LocalEnclave::MakeNextEnclave() {
   int id;
 
   while (true) {
-    std::string cmd = absl::StrCat("create ", id);
+    std::string cmd = absl::StrCat("create ", id, " ", GHOST_VERSION);
     if (write(top_ctl, cmd.c_str(), cmd.length()) == cmd.length()) {
       break;
     }
@@ -249,7 +250,7 @@ int LocalEnclave::GetCpuDataRegion(int dir_fd) {
 //
 // static
 void LocalEnclave::WaitForAgentOnlineValue(int dir_fd, int until) {
-  struct epoll_event ep_ev;
+  epoll_event ep_ev;
   int epfd;
   int fd = openat(dir_fd, "agent_online", O_RDONLY);
 
@@ -309,6 +310,20 @@ int LocalEnclave::GetNrTasks(int dir_fd) {
 }
 
 // static
+int LocalEnclave::GetAbiVersion(int dir_fd) {
+  int fd = openat(dir_fd, "abi_version", O_RDONLY);
+  CHECK_GE(fd, 0);
+
+  int version;
+  if (!absl::SimpleAtoi(ReadString(fd), &version)) {
+    version = 0;  // invalid abi version.
+  }
+
+  close(fd);
+  return version;
+}
+
+// static
 void LocalEnclave::DestroyEnclave(int ctl_fd) {
   constexpr const char kCommand[] = "destroy";
   ssize_t msg_sz = sizeof(kCommand) - 1;  // No need for the \0
@@ -336,24 +351,24 @@ void LocalEnclave::DestroyAllEnclaves() {
 }
 
 void LocalEnclave::CommonInit() {
-  CHECK_LE(topology_->num_cpus(), kMaxCpus);
-
   // Bug out if we already have a non-default global enclave.  We shouldn't have
   // more than one enclave per process at a time, at least not until we have
   // fully moved away from default enclaves.
   CHECK_EQ(Ghost::GetGlobalEnclaveCtlFd(), -1);
   Ghost::SetGlobalEnclaveCtlFd(ctl_fd_);
 
+  CHECK_EQ(GetAbiVersion(), GHOST_VERSION);
+
   int data_fd = LocalEnclave::GetCpuDataRegion(dir_fd_);
   CHECK_GE(data_fd, 0);
   data_region_size_ = GetFileSize(data_fd);
-  data_region_ = static_cast<struct ghost_cpu_data*>(
+  data_region_ = static_cast<ghost_cpu_data*>(
       mmap(/*addr=*/nullptr, data_region_size_, PROT_READ | PROT_WRITE,
            MAP_SHARED, data_fd, /*offset=*/0));
   close(data_fd);
   CHECK_NE(data_region_, MAP_FAILED);
 
-  Ghost::SetGlobalStatusWordTable(new StatusWordTable(dir_fd_, 0, 0));
+  Ghost::SetGlobalStatusWordTable(new LocalStatusWordTable(dir_fd_, 0, 0));
 }
 
 // Initialize a CpuRep for each cpu in enclaves_cpus_ (aka, cpus()).
@@ -366,7 +381,7 @@ void LocalEnclave::BuildCpuReps() {
     }
     ghost_txn* txn = &data_region_[i].txn;
     Cpu cpu = topology_->cpu(txn->cpu);
-    struct CpuRep* rep = &cpus_[cpu.id()];
+    CpuRep* rep = &cpus_[cpu.id()];
     rep->req.Init(this, cpu, txn);
     rep->agent = nullptr;
   }
@@ -529,7 +544,7 @@ bool LocalEnclave::CommitRunRequest(RunRequest* req) {
 
 void LocalEnclave::SubmitRunRequest(RunRequest* req) {
   GHOST_DPRINT(2, stderr, "COMMIT(%d): %s %d", req->cpu().id(),
-               Gtid(req->txn_->gtid).describe(), req->txn_->task_barrier);
+               req->target().describe(), req->target_barrier());
 
   if (req->open()) {
     CHECK_EQ(Ghost::Commit(req->cpu().id()), 0);
@@ -595,15 +610,18 @@ bool LocalEnclave::CompleteRunRequest(RunRequest* req) {
   return false;
 }
 
-bool LocalEnclave::LocalYieldRunRequest(
+void LocalEnclave::LocalYieldRunRequest(
     const RunRequest* req, const StatusWord::BarrierToken agent_barrier,
     const int flags) {
   DCHECK_EQ(sched_getcpu(), req->cpu().id());
   int error = Ghost::Run(Gtid(0), agent_barrier, StatusWord::NullBarrierToken(),
                          req->cpu().id(), flags);
-  if (error != 0) CHECK_EQ(errno, ESTALE);
-
-  return error == 0;
+  // Sanity check why we failed.
+  //   ESTALE: old barrier / missed message
+  //   ENODEV: enclave is being destroyed (a kernfs ioctl errno)
+  if (error != 0) {
+    CHECK(errno == ESTALE || errno == ENODEV);
+  }
 }
 
 bool LocalEnclave::PingRunRequest(const RunRequest* req) {

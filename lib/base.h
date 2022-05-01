@@ -104,7 +104,7 @@ template <typename T>
 static inline void IGNORE_RETURN_VALUE(const T& x) {}
 
 static inline absl::Time MonotonicNow() {
-  struct timespec ts;
+  timespec ts;
 
   CHECK_EQ(clock_gettime(CLOCK_MONOTONIC, &ts), 0);
   return absl::TimeFromTimespec(ts);
@@ -252,7 +252,7 @@ class Futex {
  private:
   // The futex system call. See `man 2 futex`.
   static int futex(std::atomic<int>* uaddr, int futex_op, int val,
-                   const struct timespec* timeout) {
+                   const timespec* timeout) {
     return syscall(__NR_futex, uaddr, futex_op, val, timeout);
   }
 };
@@ -348,7 +348,9 @@ class Notification {
 class ForkedProcess {
  public:
   // Returns to both the child and parent.  Caller needs to handle both cases.
-  ForkedProcess();
+  // stderr_fd is the FD in the caller (parent) that the child will use for
+  // stderr.
+  ForkedProcess(int stderr_fd = 2);
   // The child runs 'lambda' and exits.
   explicit ForkedProcess(std::function<int()> lambda);
   ForkedProcess(const ForkedProcess&) = delete;

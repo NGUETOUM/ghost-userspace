@@ -12,6 +12,9 @@ performant framework for delegation of thread scheduling policy to userspace
 processes that enables policy optimization, non-disruptive upgrades, and fault
 isolation.
 
+[SOSP '21 Paper](https://dl.acm.org/doi/10.1145/3477132.3483542)\
+[SOSP '21 Talk](https://youtu.be/j4ABe4dsbIY)
+
 The ghOSt kernel is [here](https://www.github.com/google/ghost-kernel). You must
 compile and run the userspace component on the ghOSt kernel.
 
@@ -30,10 +33,10 @@ for instructions to install Bazel on your operating system.
 
 ```
 sudo apt update
-sudo apt install libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang llvm zlib1g-dev python-is-python3
+sudo apt install libnuma-dev libcap-dev libelf-dev libbfd-dev gcc clang-12 llvm zlib1g-dev python-is-python3
 ```
 
-Note that ghOSt requires GCC 9 or newer.
+Note that ghOSt requires GCC 9 or newer and Clang 12 or newer.
 
 3\. Compile the ghOSt userspace component. Run the following from the root of
 the repository:

@@ -18,6 +18,8 @@
 #include <sys/resource.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define NSEC_PER_SEC		1000000000ULL
 
@@ -39,7 +41,8 @@ static inline int bump_memlock_rlimit(void)
 	return setrlimit(RLIMIT_MEMLOCK, &rlim_new);
 }
 
-static inline void print_stars(unsigned int val, unsigned int val_max, int width)
+static inline void print_stars_to(FILE *to, unsigned int val,
+				  unsigned int val_max, int width)
 {
 	int num_stars, num_spaces, i;
 	bool need_plus;
@@ -49,15 +52,15 @@ static inline void print_stars(unsigned int val, unsigned int val_max, int width
 	need_plus = val > val_max;
 
 	for (i = 0; i < num_stars; i++)
-		printf("*");
+		fprintf(to, "*");
 	for (i = 0; i < num_spaces; i++)
-		printf(" ");
+		fprintf(to, " ");
 	if (need_plus)
-		printf("+");
+		fprintf(to, "+");
 }
 
-static inline void print_log2_hist(unsigned int *vals, int vals_size,
-			    const char *val_type)
+static inline void print_log2_hist_to(FILE *to, unsigned int *vals,
+				      int vals_size, const char *val_type)
 {
 	int stars_max = 40, idx_max = -1;
 	unsigned int val, val_max = 0;
@@ -75,7 +78,8 @@ static inline void print_log2_hist(unsigned int *vals, int vals_size,
 	if (idx_max < 0)
 		return;
 
-	printf("%*s%-*s : count    distribution\n", idx_max <= 32 ? 5 : 15, "",
+	fprintf(to, "%*s%-*s : count    distribution\n",
+		idx_max <= 32 ? 5 : 15, "",
 		idx_max <= 32 ? 19 : 29, val_type);
 
 	if (idx_max <= 32)
@@ -90,10 +94,170 @@ static inline void print_log2_hist(unsigned int *vals, int vals_size,
 			low -= 1;
 		val = vals[i];
 		width = idx_max <= 32 ? 10 : 20;
-		printf("%*lld -> %-*lld : %-8d |", width, low, width, high, val);
-		print_stars(val, val_max, stars);
-		printf("|\n");
+		fprintf(to, "%*lld -> %-*lld : %-8d |",
+			width, low, width, high, val);
+		print_stars_to(to, val, val_max, stars);
+		fprintf(to, "|\n");
 	}
+}
+
+static inline void print_log2_hist(unsigned int *vals, int vals_size,
+                                   const char *val_type)
+{
+	print_log2_hist_to(stdout, vals, vals_size, val_type);
+}
+
+struct ksym {
+	const char *name;
+	unsigned long addr;
+};
+
+struct ksyms {
+	struct ksym *syms;
+	int syms_sz;
+	int syms_cap;
+	char *strs;
+	int strs_sz;
+	int strs_cap;
+};
+
+static inline int ksyms__add_symbol(struct ksyms *ksyms, const char *name,
+                                    unsigned long addr)
+{
+	size_t new_cap, name_len = strlen(name) + 1;
+	struct ksym *ksym;
+	void *tmp;
+
+	if (ksyms->strs_sz + name_len > ksyms->strs_cap) {
+		new_cap = ksyms->strs_cap * 4 / 3;
+		if (new_cap < ksyms->strs_sz + name_len)
+			new_cap = ksyms->strs_sz + name_len;
+		if (new_cap < 1024)
+			new_cap = 1024;
+		tmp = realloc(ksyms->strs, new_cap);
+		if (!tmp)
+			return -1;
+		ksyms->strs = (char *)tmp;
+		ksyms->strs_cap = new_cap;
+	}
+	if (ksyms->syms_sz + 1 > ksyms->syms_cap) {
+		new_cap = ksyms->syms_cap * 4 / 3;
+		if (new_cap < 1024)
+			new_cap = 1024;
+		tmp = realloc(ksyms->syms, sizeof(*ksyms->syms) * new_cap);
+		if (!tmp)
+			return -1;
+		ksyms->syms = (struct ksym *)tmp;
+		ksyms->syms_cap = new_cap;
+	}
+
+	ksym = &ksyms->syms[ksyms->syms_sz];
+	/* while constructing, re-use pointer as just a plain offset */
+	ksym->name = (const char *)(unsigned long)ksyms->strs_sz;
+	ksym->addr = addr;
+
+	memcpy(ksyms->strs + ksyms->strs_sz, name, name_len);
+	ksyms->strs_sz += name_len;
+	ksyms->syms_sz++;
+
+	return 0;
+}
+
+static inline int ksym_cmp(const void *p1, const void *p2)
+{
+	const struct ksym *s1 = (const struct ksym *)p1;
+	const struct ksym *s2 = (const struct ksym *)p2;
+
+	if (s1->addr == s2->addr)
+		return strcmp(s1->name, s2->name);
+	return s1->addr < s2->addr ? -1 : 1;
+}
+
+static inline void ksyms__free(struct ksyms *ksyms)
+{
+	if (!ksyms)
+		return;
+
+	free(ksyms->syms);
+	free(ksyms->strs);
+	free(ksyms);
+}
+
+static inline struct ksyms *ksyms__load(void)
+{
+	char sym_type, sym_name[256];
+	struct ksyms *ksyms;
+	unsigned long sym_addr;
+	int i, ret;
+	FILE *f;
+
+	f = fopen("/proc/kallsyms", "r");
+	if (!f)
+		return NULL;
+
+	ksyms = (struct ksyms *)calloc(1, sizeof(*ksyms));
+	if (!ksyms)
+		goto err_out;
+
+	while (true) {
+		ret = fscanf(f, "%lx %c %s%*[^\n]\n",
+			     &sym_addr, &sym_type, sym_name);
+		if (ret == EOF && feof(f))
+			break;
+		if (ret != 3)
+			goto err_out;
+		if (ksyms__add_symbol(ksyms, sym_name, sym_addr))
+			goto err_out;
+	}
+
+	/* now when strings are finalized, adjust pointers properly */
+	for (i = 0; i < ksyms->syms_sz; i++)
+		ksyms->syms[i].name += (unsigned long)ksyms->strs;
+
+	qsort(ksyms->syms, ksyms->syms_sz, sizeof(*ksyms->syms), ksym_cmp);
+
+	fclose(f);
+	return ksyms;
+
+err_out:
+	ksyms__free(ksyms);
+	fclose(f);
+	return NULL;
+}
+
+static inline const struct ksym *ksyms__map_addr(const struct ksyms *ksyms,
+                                                 unsigned long addr)
+{
+	int start = 0, end = ksyms->syms_sz - 1, mid;
+	unsigned long sym_addr;
+
+	/* find largest sym_addr <= addr using binary search */
+	while (start < end) {
+		mid = start + (end - start + 1) / 2;
+		sym_addr = ksyms->syms[mid].addr;
+
+		if (sym_addr <= addr)
+			start = mid;
+		else
+			end = mid - 1;
+	}
+
+	if (start == end && ksyms->syms[start].addr <= addr)
+		return &ksyms->syms[start];
+	return NULL;
+}
+
+static inline const struct ksym *ksyms__get_symbol(const struct ksyms *ksyms,
+                                                   const char *name)
+{
+	int i;
+
+	for (i = 0; i < ksyms->syms_sz; i++) {
+		if (strcmp(ksyms->syms[i].name, name) == 0)
+			return &ksyms->syms[i];
+	}
+
+	return NULL;
 }
 
 #endif  // GHOST_LIB_BPF_TRACE_HELPERS_H_

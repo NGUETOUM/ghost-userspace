@@ -15,6 +15,8 @@ exports_files([
     "common.bpf.h",
     "edf.h",
     "ghost.h",
+    "klockstat.h",
+    "schedfair.h",
     "schedlat.h",
     "schedrun.h",
 ])
@@ -41,6 +43,17 @@ bpf_program(
 )
 
 bpf_program(
+    name = "klockstat_bpf",
+    src = "klockstat.bpf.c",
+    hdrs = [
+        "common.bpf.h",
+        "klockstat.h",
+        "//:kernel/vmlinux_ghost_5_11.h",
+    ],
+    bpf_object = "klockstat_bpf.o",
+)
+
+bpf_program(
     name = "schedclasstop_bpf",
     src = "schedclasstop.bpf.c",
     hdrs = [
@@ -48,6 +61,18 @@ bpf_program(
         "//:kernel/vmlinux_ghost_5_11.h",
     ],
     bpf_object = "schedclasstop_bpf.o",
+)
+
+bpf_program(
+    name = "schedfair_bpf",
+    src = "schedfair.bpf.c",
+    hdrs = [
+        "common.bpf.h",
+        "schedfair.h",
+        "//:kernel/vmlinux_ghost_5_11.h",
+        "//third_party:iovisor_bcc/bits.bpf.h",
+    ],
+    bpf_object = "schedfair_bpf.o",
 )
 
 bpf_program(

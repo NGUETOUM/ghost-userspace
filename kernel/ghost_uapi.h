@@ -35,7 +35,7 @@
  * process are the same version as each other. Each successive version changes
  * values in this header file, assumptions about operations in the kernel, etc.
  */
-#define GHOST_VERSION	55
+#define GHOST_VERSION	62
 
 /*
  * Define SCHED_GHOST via the ghost uapi unless it has already been defined
@@ -57,12 +57,6 @@
 enum ghost_type {
 	GHOST_AGENT,
 	GHOST_TASK,
-};
-
-enum {
-	GHOST_SCHED_TASK_PRIO,
-	GHOST_SCHED_AGENT_PRIO,
-	GHOST_SCHED_MAX_PRIO,
 };
 
 /*
@@ -91,6 +85,7 @@ struct ghost_msg_src {
 struct timerfd_ghost {
 	int cpu;
 	int flags;
+  uint64_t type;
 	uint64_t cookie;
 };
 #define TIMERFD_GHOST_ENABLED	(1 << 0)
@@ -159,6 +154,14 @@ struct ghost_ioc_timerfd_settime {
 	struct timerfd_ghost timerfd_ghost;
 };
 
+struct ghost_ioc_run {
+	int64_t gtid;
+	uint32_t agent_barrier;
+	uint32_t task_barrier;
+	int run_cpu;
+	int run_flags;
+};
+
 #define GHOST_IOC_NULL			_IO('g', 0)
 #define GHOST_IOC_SW_GET_INFO		_IOWR('g', 1, struct ghost_ioc_sw_get_info)
 #define GHOST_IOC_SW_FREE		_IOW('g', 2, struct ghost_sw_info)
@@ -170,6 +173,7 @@ struct ghost_ioc_timerfd_settime {
 #define GHOST_IOC_COMMIT_TXN		_IOW('g', 8, struct ghost_ioc_commit_txn)
 #define GHOST_IOC_SYNC_GROUP_TXN	_IOW('g', 9, struct ghost_ioc_commit_txn)
 #define GHOST_IOC_TIMERFD_SETTIME	_IOWR('g', 10, struct ghost_ioc_timerfd_settime)
+#define GHOST_IOC_RUN			_IOW('g', 11, struct ghost_ioc_run)
 
 /*
  * Status word region APIs.
@@ -359,6 +363,7 @@ struct ghost_msg_payload_cpu_tick {
 
 struct ghost_msg_payload_timer {
 	int cpu;
+  uint64_t type;
 	uint64_t cookie;
 };
 
@@ -404,17 +409,6 @@ struct ghost_ring {
 };
 
 #define GHOST_MAX_QUEUE_ELEMS	65536	/* arbitrary */
-
-/*
- * Define ghOSt syscall numbers here until they can be discovered via
- * <unistd.h>.
- */
-#ifndef __NR_ghost_run
-#define __NR_ghost_run	450
-#endif
-#ifndef __NR_ghost
-#define __NR_ghost	451
-#endif
 
 /*
  * 'ops' supported by gsys_ghost().
@@ -577,16 +571,6 @@ struct ghost_cpu_data {
 enum {
 	GHOST_GTID_LOOKUP_TGID,		/* return group_leader pid */
 };
-
-/*
- * ghost tids referring to normal tasks always have a positive value:
- * (0 | 22 bits of actual pid_t | 41 bit non-zero seqnum)
- *
- * The embedded 'pid' following linux terminology is actually referring
- * to the thread id (i.e. what would be returned by syscall(__NR_gettid)).
- */
-#define GHOST_TID_SEQNUM_BITS	41
-#define GHOST_TID_PID_BITS	22
 
 // clang-format on
 // NOLINTEND

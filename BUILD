@@ -14,6 +14,9 @@ package(default_visibility = ["//:__pkg__"])
 # by Google. We need to license it under GPLv2 though so that the eBPF code
 # can use kernel functionality restricted to code licensed under GPLv2.
 #
+# MIT: Just covers third_party/util/util.h. This code was not written by Google,
+# but was modified by Google.
+#
 # Apache 2: All other code is covered by Apache 2. This includes the library
 # code in lib/, the experiments, all code in bpf/user/, etc.
 licenses(["notice"])
@@ -37,12 +40,12 @@ cc_library(
         "lib/agent.cc",
         "lib/channel.cc",
         "lib/enclave.cc",
-        "lib/scheduler.cc",
         "lib/topology.cc",
     ],
     hdrs = [
         "bpf/user/agent.h",
         "bpf/user/ghost_bpf.skel.h",
+        "bpf/user/schedghostidle_bpf.skel.h",
         "lib/agent.h",
         "lib/channel.h",
         "lib/enclave.h",
@@ -61,6 +64,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@linux//:libbpf",
@@ -129,8 +133,6 @@ cc_library(
     copts = compiler_flags,
     deps = [
         ":agent",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
     ],
@@ -187,7 +189,7 @@ cc_test(
     copts = compiler_flags,
     deps = [
         ":agent",
-        ":fifo_scheduler",
+        ":fifo_per_cpu_scheduler",
         "@com_google_absl//absl/random",
         "@com_google_googletest//:gtest_main",
     ],
@@ -205,6 +207,7 @@ cc_library(
         "kernel/ghost_uapi.h",
         "lib/base.h",
         "lib/logging.h",
+        "//third_party:util/util.h",
     ],
     copts = compiler_flags,
     deps = [
@@ -324,36 +327,68 @@ cc_test(
     copts = compiler_flags,
     deps = [
         ":agent",
+        ":fifo_centralized_scheduler",
         "@com_google_googletest//:gtest_main",
     ],
 )
 
 cc_binary(
-    name = "fifo_agent",
+    name = "fifo_per_cpu_agent",
     srcs = [
-        "schedulers/fifo/fifo_agent.cc",
+        "schedulers/fifo/per_cpu/fifo_agent.cc",
     ],
     copts = compiler_flags,
     deps = [
         ":agent",
-        ":fifo_scheduler",
+        ":fifo_per_cpu_scheduler",
         "@com_google_absl//absl/debugging:symbolize",
         "@com_google_absl//absl/flags:parse",
     ],
 )
 
 cc_library(
-    name = "fifo_scheduler",
+    name = "fifo_per_cpu_scheduler",
     srcs = [
-        "schedulers/fifo/fifo_scheduler.cc",
-        "schedulers/fifo/fifo_scheduler.h",
+        "schedulers/fifo/per_cpu/fifo_scheduler.cc",
+        "schedulers/fifo/per_cpu/fifo_scheduler.h",
     ],
     hdrs = [
-        "schedulers/fifo/fifo_scheduler.h",
+        "schedulers/fifo/per_cpu/fifo_scheduler.h",
     ],
     copts = compiler_flags,
     deps = [
         ":agent",
+    ],
+)
+
+cc_binary(
+    name = "fifo_centralized_agent",
+    srcs = [
+        "schedulers/fifo/centralized/fifo_agent.cc",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        ":fifo_centralized_scheduler",
+        "@com_google_absl//absl/debugging:symbolize",
+        "@com_google_absl//absl/flags:parse",
+    ],
+)
+
+cc_library(
+    name = "fifo_centralized_scheduler",
+    srcs = [
+        "schedulers/fifo/centralized/fifo_scheduler.cc",
+        "schedulers/fifo/centralized/fifo_scheduler.h",
+    ],
+    hdrs = [
+        "schedulers/fifo/centralized/fifo_scheduler.h",
+    ],
+    copts = compiler_flags,
+    deps = [
+        ":agent",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -433,6 +468,27 @@ bpf_skeleton(
 )
 
 bpf_skeleton(
+    name = "klockstat_bpf_skel",
+    bpf_object = "//third_party/bpf:klockstat_bpf",
+    skel_hdr = "bpf/user/klockstat_bpf.skel.h",
+)
+
+cc_binary(
+    name = "klockstat",
+    srcs = [
+        "bpf/user/klockstat.c",
+        "bpf/user/klockstat_bpf.skel.h",
+        "//third_party:iovisor_bcc/trace_helpers.h",
+        "//third_party/bpf:klockstat.h",
+    ],
+    copts = compiler_flags,
+    linkopts = bpf_linkopts,
+    deps = [
+        "@linux//:libbpf",
+    ],
+)
+
+bpf_skeleton(
     name = "schedclasstop_bpf_skel",
     bpf_object = "//third_party/bpf:schedclasstop_bpf",
     skel_hdr = "bpf/user/schedclasstop_bpf.skel.h",
@@ -444,6 +500,27 @@ cc_binary(
         "bpf/user/schedclasstop.c",
         "bpf/user/schedclasstop_bpf.skel.h",
         "//third_party:iovisor_bcc/trace_helpers.h",
+    ],
+    copts = compiler_flags,
+    linkopts = bpf_linkopts,
+    deps = [
+        "@linux//:libbpf",
+    ],
+)
+
+bpf_skeleton(
+    name = "schedfair_bpf_skel",
+    bpf_object = "//third_party/bpf:schedfair_bpf",
+    skel_hdr = "bpf/user/schedfair_bpf.skel.h",
+)
+
+cc_binary(
+    name = "schedfair",
+    srcs = [
+        "bpf/user/schedfair.c",
+        "bpf/user/schedfair_bpf.skel.h",
+        "//third_party:iovisor_bcc/trace_helpers.h",
+        "//third_party/bpf:schedfair.h",
     ],
     copts = compiler_flags,
     linkopts = bpf_linkopts,
@@ -519,14 +596,14 @@ cc_binary(
 cc_library(
     name = "experiments_shared",
     srcs = [
-        "experiments/shared/cfs.cc",
-        "experiments/shared/ghost.cc",
+        "experiments/shared/prio_table_helper.cc",
         "experiments/shared/thread_pool.cc",
+        "experiments/shared/thread_wait.cc",
     ],
     hdrs = [
-        "experiments/shared/cfs.h",
-        "experiments/shared/ghost.h",
+        "experiments/shared/prio_table_helper.h",
         "experiments/shared/thread_pool.h",
+        "experiments/shared/thread_wait.h",
     ],
     copts = compiler_flags,
     deps = [

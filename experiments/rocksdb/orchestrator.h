@@ -23,8 +23,8 @@
 #include "experiments/rocksdb/ingress.h"
 #include "experiments/rocksdb/latency.h"
 #include "experiments/rocksdb/request.h"
-#include "experiments/shared/cfs.h"
 #include "experiments/shared/thread_pool.h"
+#include "experiments/shared/thread_wait.h"
 
 namespace ghost_test {
 
@@ -35,6 +35,11 @@ namespace ghost_test {
 // Note that this is an abstract class so it cannot be constructed.
 class Orchestrator {
  public:
+  enum GhostWaitType {
+    kPrioTable,
+    kFutex,
+  };
+
   // Orchestrator configuration options.
   struct Options {
     // Parses all command line flags and returns them as an 'Options' instance.
@@ -90,7 +95,14 @@ class Orchestrator {
     // experiments. The workers can either spin while waiting for more work
     // ('kWaitSpin') or they can sleep on a futex while waiting for more work
     // ('kWaitFutex').
-    CompletelyFairScheduler::WaitType cfs_wait_type;
+    ThreadWait::WaitType cfs_wait_type;
+
+    // The worker wait type for ghOSt experiments. The workers can either
+    // interact with ghOSt and wait via the PrioTable or they can wait via a
+    // futex. In the former case, ghOSt learns worker runnability status via the
+    // PrioTable. In the latter case, ghOSt learns worker runnability status
+    // implicitly via TASK_BLOCKED/TASK_WAKEUP messages generated via the futex.
+    GhostWaitType ghost_wait_type;
 
     // The total amount of time spent processing a Get request in RocksDB and
     // doing synthetic work.

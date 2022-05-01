@@ -45,16 +45,10 @@ static inline void set_verbose(int32_t v) { absl::SetFlag(&FLAGS_verbose, v); }
 
 class StatusWordTable {
  public:
-  // Create or attach to a preexisting status word region in the enclave.
-  // `enclave_fd` is the fd for the enclave directory, e.g.
-  // /sys/fs/ghost/enclave_1/.  `id` is a user-provided identifier for the
-  // status word region.  `numa_node` is the NUMA node from which the kernel
-  // should allocate the memory for the staus word region.
-  StatusWordTable(int enclave_fd, int id, int numa_node);
-  ~StatusWordTable();
+  virtual ~StatusWordTable() {}
 
   int id() const { return header_->id; }
-  struct ghost_status_word* get(unsigned int index) {
+  ghost_status_word* get(unsigned int index) {
     CHECK_LT(index, header_->capacity);
     return &table_[index];
   }
@@ -64,11 +58,11 @@ class StatusWordTable {
 
   // Runs l on every non-agent, ghost-task status word.
   void ForEachTaskStatusWord(
-      const std::function<void(struct ghost_status_word* sw, uint32_t region_id,
+      const std::function<void(ghost_status_word* sw, uint32_t region_id,
                                uint32_t idx)>
           l) {
     for (int i = 0; i < header_->capacity; ++i) {
-      struct ghost_status_word* sw = get(i);
+      ghost_status_word* sw = get(i);
       if (!(sw->flags & GHOST_SW_F_INUSE)) {
         continue;
       }
@@ -79,11 +73,25 @@ class StatusWordTable {
     }
   }
 
- private:
-  int fd_;
+ protected:
+  // Empty constructor for subclasses.
+  StatusWordTable() {}
+
+  int fd_ = -1;
   size_t map_size_ = 0;
-  struct ghost_sw_region_header* header_ = nullptr;
-  struct ghost_status_word* table_ = nullptr;
+  ghost_sw_region_header* header_ = nullptr;
+  ghost_status_word* table_ = nullptr;
+};
+
+class LocalStatusWordTable : public StatusWordTable {
+ public:
+  // Create or attach to a preexisting status word region in the enclave.
+  // `enclave_fd` is the fd for the enclave directory, e.g.
+  // /sys/fs/ghost/enclave_1/.  `id` is a user-provided identifier for the
+  // status word region.  `numa_node` is the NUMA node from which the kernel
+  // should allocate the memory for the status word region.
+  LocalStatusWordTable(int enclave_fd, int id, int numa_node);
+  ~LocalStatusWordTable() final;
 };
 
 // TODO: Syscall definition needs fixing for any hope of 32-bit compat.
@@ -93,8 +101,15 @@ class Ghost {
 
   static int Run(const Gtid gtid, const uint32_t agent_barrier,
                  const uint32_t task_barrier, const int cpu, const int flags) {
-    return syscall(__NR_ghost_run, gtid.id(), agent_barrier, task_barrier, cpu,
-                   flags);
+    ghost_ioc_run data = {
+      .gtid = gtid.id(),
+      .agent_barrier = agent_barrier,
+      .task_barrier = task_barrier,
+      .run_cpu = cpu,
+      .run_flags = flags,
+    };
+    return ioctl(gbl_ctl_fd_, GHOST_IOC_RUN, &data);
+
   }
 
   static int SyncCommit(cpu_set_t* const cpuset) {
@@ -200,7 +215,7 @@ class Ghost {
 
   static int GetStatusWordInfo(const ghost_type type, const uint64_t arg,
                                ghost_sw_info* const info) {
-    struct ghost_ioc_sw_get_info data;
+    ghost_ioc_sw_get_info data;
     data.request.type = type;
     data.request.arg = arg;
     int err = ioctl(gbl_ctl_fd_, GHOST_IOC_SW_GET_INFO, &data);
@@ -233,14 +248,17 @@ class Ghost {
   // - cpu: produce CPU_TIMER_EXPIRED msg into 'dst_q' of agent on this cpu. If
   // an uninitialized (ie. invalid) cpu is passed, the timerfd will not produce
   // any msg.
+  // - type: an opaque value that is reflected back in CPU_TIMER_EXPIRED msg.
   // - cookie: an opaque value that is reflected back in CPU_TIMER_EXPIRED msg.
   static int TimerFdSettime(
       const int fd, const int flags, itimerspec* const itimerspec,
       const Cpu& cpu = Cpu(Cpu::UninitializedType::kUninitialized),
+      const uint64_t type = 0,
       const uint64_t cookie = 0) {
     timerfd_ghost timerfd_ghost = {
         .cpu = cpu.valid() ? cpu.id() : -1,
         .flags = cpu.valid() ? TIMERFD_GHOST_ENABLED : 0,
+        .type = type,
         .cookie = cookie,
     };
     ghost_ioc_timerfd_settime data = {
@@ -255,20 +273,33 @@ class Ghost {
 
   static bool GhostIsMountedAt(const char* path);
   static void MountGhostfs();
-  // Returns the version of ghOSt running in the kernel.
-  static int GetVersion(uint64_t& version);
+  // Returns the ghOSt abi versions supported by the kernel.
+  static int GetSupportedVersions(std::vector<uint32_t>& versions);
 
   // Checks that the userspace ABI version matches the kernel ABI version.
   // This method performs a 'CHECK_EQ' so that the process dies if the versions
   // do not match. This is useful since this method runs on startup when
   // 'kVersionCheck' is initialized in the agent.
   static bool CheckVersion() {
-    uint64_t kernel_abi_version;
-    CHECK_EQ(GetVersion(kernel_abi_version), 0);
+    std::vector<uint32_t> versions;
+    CHECK_EQ(GetSupportedVersions(versions), 0);
+
     // The version of ghOSt running in the kernel must match the version of
     // ghOSt that this userspace binary was built for.
-    CHECK_EQ(kernel_abi_version, GHOST_VERSION);
-    return kernel_abi_version == GHOST_VERSION;
+    auto iter = std::find(versions.begin(), versions.end(), GHOST_VERSION);
+    if (iter == versions.end()) {
+      std::cerr << "Fatal error!" << std::endl;
+      std::cerr << "Ghost version " << GHOST_VERSION << " not supported"
+                << std::endl;
+      std::cerr << "Kernel supports versions: ";
+      for (auto const& i : versions) {
+        std::cerr << i << ' ';
+      }
+      std::cerr << std::endl;
+      exit(1);
+    }
+
+    return iter != versions.end();
   }
 
   static void SetGlobalEnclaveCtlFd(int fd) { gbl_ctl_fd_ = fd; }
@@ -343,19 +374,19 @@ class StatusWord {
   // Initializes to an empty status word.
   StatusWord() {}
   // Initializes to a known sw.  gtid is only used for debugging.
-  StatusWord(Gtid gtid, struct ghost_sw_info sw_info);
+  StatusWord(Gtid gtid, ghost_sw_info sw_info);
 
   // Takes ownership of the word in "move_from", move_from becomes empty.
   StatusWord(StatusWord&& move_from);
   StatusWord& operator=(StatusWord&&);
 
   // REQUIRES: *this must be empty.
-  ~StatusWord();
+  virtual ~StatusWord();
 
   // Signals to ghOSt that the status-word associated with *this is no longer
   // being used and may be potentially freed.  Resets *this to empty().
   // REQUIRES: *this must not be empty().
-  void Free();
+  virtual void Free();
 
   bool empty() { return sw_ == nullptr; }
 
@@ -389,13 +420,13 @@ class StatusWord {
   StatusWord(const StatusWord&) = delete;
   StatusWord& operator=(const StatusWord&) = delete;
 
- private:
+ protected:
   struct AgentSW {};
   explicit StatusWord(AgentSW);
 
   Gtid owner_;  // Debug only, remove at some point.
-  struct ghost_sw_info sw_info_;
-  struct ghost_status_word* sw_ = nullptr;
+  ghost_sw_info sw_info_;
+  ghost_status_word* sw_ = nullptr;
 
   uint32_t sw_barrier() const {
     std::atomic<uint32_t>* barrier =

@@ -19,7 +19,7 @@
 #include "absl/random/random.h"
 #include "lib/agent.h"
 #include "lib/scheduler.h"
-#include "schedulers/fifo/fifo_scheduler.h"
+#include "schedulers/fifo/per_cpu/fifo_scheduler.h"
 
 namespace ghost {
 namespace {
@@ -69,7 +69,7 @@ class DeadAgent : public Agent {
     ASSERT_THAT(channel_, NotNull());
 
     bool done = false;  // set to true below when MSG_TASK_DEAD is received.
-    std::unique_ptr<Task> task(nullptr);  // initialized in TASK_NEW handler.
+    std::unique_ptr<Task<>> task(nullptr);  // initialized in TASK_NEW handler.
     while (true) {
       while (true) {
         Message msg = Peek(channel_);
@@ -86,8 +86,8 @@ class DeadAgent : public Agent {
             const ghost_msg_payload_task_new* payload =
                 static_cast<const ghost_msg_payload_task_new*>(msg.payload());
             ASSERT_THAT(task, IsNull());
-            task =
-                absl::make_unique<Task>(Gtid(payload->gtid), payload->sw_info);
+            task = absl::make_unique<Task<>>(Gtid(payload->gtid),
+                                             payload->sw_info);
             task->seqnum = msg.seqnum();
             break;
           }
@@ -145,11 +145,11 @@ class DeadAgent : public Agent {
   Channel* channel_;
 };
 
-template <class ENCLAVE = LocalEnclave>
-class FullDeadAgent final : public FullAgent<ENCLAVE> {
+template <class EnclaveType = LocalEnclave>
+class FullDeadAgent final : public FullAgent<EnclaveType> {
  public:
   explicit FullDeadAgent(const AgentConfig& config)
-      : FullAgent<ENCLAVE>(config),
+      : FullAgent<EnclaveType>(config),
         sched_cpu_(config.cpus_.Front()),
         satellite_cpu_(config.cpus_.Back()),
         channel_(GHOST_MAX_QUEUE_ELEMS, sched_cpu_.numa_node(),
@@ -496,10 +496,10 @@ class TestAgent : public Agent {
   T* scheduler_;
 };
 
-template <class ENCLAVE>
-class SyncGroupAgent final : public FullAgent<ENCLAVE> {
+template <class EnclaveType>
+class SyncGroupAgent final : public FullAgent<EnclaveType> {
  public:
-  explicit SyncGroupAgent(AgentConfig config) : FullAgent<ENCLAVE>(config) {
+  explicit SyncGroupAgent(AgentConfig config) : FullAgent<EnclaveType>(config) {
     auto allocator =
         std::make_shared<ThreadSafeMallocTaskAllocator<FifoTask>>();
     scheduler_ = absl::make_unique<SyncGroupScheduler>(
@@ -641,11 +641,11 @@ class IdlingAgent : public Agent {
 
 constexpr int kNeedCpuNotIdle = 1;
 
-template <class ENCLAVE>
-class FullIdlingAgent final : public FullAgent<ENCLAVE> {
+template <class EnclaveType>
+class FullIdlingAgent final : public FullAgent<EnclaveType> {
  public:
   explicit FullIdlingAgent(const AgentConfig& config)
-      : FullAgent<ENCLAVE>(config), channel_(GHOST_MAX_QUEUE_ELEMS, 0) {
+      : FullAgent<EnclaveType>(config), channel_(GHOST_MAX_QUEUE_ELEMS, 0) {
     channel_.SetEnclaveDefault();
     // Start an instance of IdlingAgent on each cpu.
     this->StartAgentTasks();
@@ -762,9 +762,9 @@ TEST(IdleTest, NeedCpuNotIdle) {
   Ghost::CloseGlobalEnclaveCtlFd();
 }
 
-struct CoreSchedTask : public Task {
-  explicit CoreSchedTask(Gtid task_gtid, struct ghost_sw_info sw_info)
-      : Task(task_gtid, sw_info) {}
+struct CoreSchedTask : public Task<> {
+  explicit CoreSchedTask(Gtid task_gtid, ghost_sw_info sw_info)
+      : Task<>(task_gtid, sw_info) {}
   ~CoreSchedTask() override {}
 
   enum class RunState {
@@ -801,7 +801,7 @@ class CoreScheduler {
   }
 
   // Admit a new task into the scheduler.
-  void TaskNew(uint64_t gtid, bool runnable, struct ghost_sw_info sw_info,
+  void TaskNew(uint64_t gtid, bool runnable, ghost_sw_info sw_info,
                uint32_t seqnum) {
     absl::MutexLock lock(&mu_);
 
@@ -998,16 +998,18 @@ class CoreScheduler {
   std::array<CpuState, MAX_CPUS> cpu_states_ ABSL_GUARDED_BY(mu_);
 };
 
+#ifdef notyet // b/214648944
+#endif  // b/214648944
+
 // This test ensures the version check functionality works properly.
 // 'Ghost::GetVersion' should return a version that matches 'GHOST_VERSION'.
 TEST(ApiTest, CheckVersion) {
-  uint64_t kernel_abi_version;
-  ASSERT_THAT(Ghost::GetVersion(kernel_abi_version), Eq(0));
-  ASSERT_THAT(kernel_abi_version, testing::Eq(GHOST_VERSION));
-  // Use 'GHOST_VERSION + 1' rather than a specific number, such as 0, so that
-  // this test doesn't fail if the number we choose happens to be the current
-  // kernel ABI version.
-  ASSERT_THAT(kernel_abi_version, testing::Ne(GHOST_VERSION + 1));
+  std::vector<uint32_t> kernel_abi_versions;
+  ASSERT_THAT(Ghost::GetSupportedVersions(kernel_abi_versions), Eq(0));
+
+  auto iter = std::find(kernel_abi_versions.begin(), kernel_abi_versions.end(),
+                        GHOST_VERSION);
+  ASSERT_THAT(iter, testing::Ne(kernel_abi_versions.end()));
 }
 
 // Bare-bones agent implementation that can schedule exactly one task.
@@ -1022,6 +1024,18 @@ class TimeAgent : public Agent {
     channel_.SetEnclaveDefault();
   }
 
+  ~TimeAgent() {
+    std::cout << "switch_delays:" << std::endl;
+    for (absl::Duration delay : switch_delays_) {
+      std::cout << absl::ToInt64Nanoseconds(delay) << " ns" << std::endl;
+    }
+
+    std::cout << "commit_delays:" << std::endl;
+    for (absl::Duration delay : commit_delays_) {
+      std::cout << absl::ToInt64Nanoseconds(delay) << " ns" << std::endl;
+    }
+  }
+
   // Wait for agent to idle.
   void WaitForIdle() { idle_.WaitForNotification(); }
 
@@ -1032,7 +1046,7 @@ class TimeAgent : public Agent {
     SignalReady();
     WaitForEnclaveReady();
 
-    std::unique_ptr<Task> task(nullptr);
+    std::unique_ptr<Task<>> task(nullptr);
     bool runnable = false;
     while (true) {
       while (true) {
@@ -1054,8 +1068,8 @@ class TimeAgent : public Agent {
                 static_cast<const ghost_msg_payload_task_new*>(msg.payload());
 
             ASSERT_THAT(task, IsNull());
-            task =
-                absl::make_unique<Task>(Gtid(payload->gtid), payload->sw_info);
+            task = absl::make_unique<Task<>>(Gtid(payload->gtid),
+                                             payload->sw_info);
             task->seqnum = msg.seqnum();
             runnable = payload->runnable;
             break;
@@ -1081,7 +1095,10 @@ class TimeAgent : public Agent {
             absl::Duration switch_delay =
                 task->status_word.switch_time() - commit_time_;
             EXPECT_THAT(switch_delay, Gt(absl::ZeroDuration()));
-            EXPECT_THAT(switch_delay, Lt(absl::Microseconds(100)));
+            if (num_yields_++) {
+              EXPECT_THAT(switch_delay, Lt(absl::Microseconds(100)));
+            }
+            switch_delays_.push_back(switch_delay);
             break;
           }
 
@@ -1123,7 +1140,10 @@ class TimeAgent : public Agent {
         commit_time_ = req->commit_time();
         absl::Duration commit_delay = commit_time_ - now;
         EXPECT_THAT(commit_delay, Gt(absl::ZeroDuration()));
-        EXPECT_THAT(commit_delay, Lt(absl::Microseconds(100)));
+        if (num_commits_++) {
+          EXPECT_THAT(commit_delay, Lt(absl::Microseconds(100)));
+        }
+        commit_delays_.push_back(commit_delay);
       }
     }
   }
@@ -1145,6 +1165,10 @@ class TimeAgent : public Agent {
   Notification idle_;
   absl::Time commit_time_;
   bool first_idle_ = true;
+  int num_commits_ = 0;
+  int num_yields_ = 0;
+  std::vector<absl::Duration> switch_delays_;
+  std::vector<absl::Duration> commit_delays_;
 };
 
 // Tests that the kernel writes plausible commit times to transactions and
@@ -1166,7 +1190,8 @@ TEST(ApiTest, KernelTimes) {
   agent.WaitForIdle();
 
   GhostThread t(GhostThread::KernelScheduler::kGhost, [] {
-    sched_yield();  // MSG_TASK_YIELD.
+    for (int i = 0; i < 10; i++)
+      sched_yield();  // MSG_TASK_YIELD.
   });
   t.Join();
 
@@ -1229,7 +1254,7 @@ class SchedAffinityAgent : public Agent {
 
     bool oncpu = false;
     bool runnable = false;
-    std::unique_ptr<Task> task(nullptr);  // initialized in TASK_NEW handler.
+    std::unique_ptr<Task<>> task(nullptr);  // initialized in TASK_NEW handler.
 
     CpuList task_cpulist = *enclave()->cpus();
     task_cpulist.Clear(cpu());  // don't schedule on spinning agent's cpu.
@@ -1259,8 +1284,8 @@ class SchedAffinityAgent : public Agent {
             ASSERT_THAT(task, IsNull());
             ASSERT_FALSE(oncpu);
             ASSERT_FALSE(runnable);
-            task =
-                absl::make_unique<Task>(Gtid(payload->gtid), payload->sw_info);
+            task = absl::make_unique<Task<>>(Gtid(payload->gtid),
+                                             payload->sw_info);
             task->seqnum = msg.seqnum();
             runnable = payload->runnable;
             break;
@@ -1363,11 +1388,11 @@ class SchedAffinityAgent : public Agent {
   Channel* channel_;
 };
 
-template <class ENCLAVE = LocalEnclave>
-class FullSchedAffinityAgent final : public FullAgent<ENCLAVE> {
+template <class EnclaveType = LocalEnclave>
+class FullSchedAffinityAgent final : public FullAgent<EnclaveType> {
  public:
   explicit FullSchedAffinityAgent(const AgentConfig& config)
-      : FullAgent<ENCLAVE>(config),
+      : FullAgent<EnclaveType>(config),
         sched_cpu_(config.cpus_.Front()),
         channel_(GHOST_MAX_QUEUE_ELEMS, sched_cpu_.numa_node()) {
     channel_.SetEnclaveDefault();
@@ -1684,12 +1709,12 @@ class DepartedRaceAgent : public Agent {
                       // non-nullptr for the global spinning agent.
 };
 
-template <class ENCLAVE = LocalEnclave>
-class FullDepartedRaceAgent final : public FullAgent<ENCLAVE> {
+template <class EnclaveType = LocalEnclave>
+class FullDepartedRaceAgent final : public FullAgent<EnclaveType> {
  public:
   explicit FullDepartedRaceAgent(const AgentConfig& config)
-      : FullAgent<ENCLAVE>(config),
-        sched_cpu_(config.cpus_.Front()),   // arbitrary.
+      : FullAgent<EnclaveType>(config),
+        sched_cpu_(config.cpus_.Front()),  // arbitrary.
         channel_(GHOST_MAX_QUEUE_ELEMS, sched_cpu_.numa_node()) {
     channel_.SetEnclaveDefault();
     // Start an instance of DepartedRaceAgent on each cpu.

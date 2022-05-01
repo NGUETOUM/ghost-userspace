@@ -50,9 +50,12 @@ std::ostream& operator<<(std::ostream& os,
   }
 
   flags["cfs_wait_type"] =
-      options.cfs_wait_type ==
-              ghost_test::CompletelyFairScheduler::WaitType::kWaitSpin
+      options.cfs_wait_type == ghost_test::ThreadWait::WaitType::kSpin
           ? "spin"
+          : "futex";
+  flags["ghost_wait_type"] =
+      options.ghost_wait_type == Orchestrator::GhostWaitType::kPrioTable
+          ? "prio_table"
           : "futex";
   flags["get_duration"] = absl::FormatDuration(options.get_duration);
   flags["range_duration"] = absl::FormatDuration(options.range_duration);
@@ -249,6 +252,14 @@ void Orchestrator::Spin(absl::Duration duration,
     return;
   }
 
+  // We are using the CPU time consumed by the thread to determine how much
+  // synthetic work has been performed. We are not just looking at wall clock
+  // times, since the thread could be preempted and the clock would still
+  // advance, wrongly causing us to think that the thread has performed
+  // synthetic work while it was preempted. Using the CPU time consumed by the
+  // thread is an accurate way of tracking synthetic work since the CPU time
+  // only advances while the thread is running on a CPU, not while the thread is
+  // preempted.
   while (GetThreadCpuTime() - start_duration < duration) {
     // We are doing synthetic work, so do not issue 'pause' instructions.
   }

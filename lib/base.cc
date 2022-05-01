@@ -23,6 +23,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -78,35 +79,138 @@ void Notification::WaitForNotification() {
   Futex::Wait(&notified_, NotifiedState::kWaiter);
 }
 
-pid_t Gtid::tgid() const {
-  int64_t tgid;
-  // This should ideally be in ":ghost" but that results in a
-  // dependency inversion because ":ghost" depends on ":base".
-  int rc = syscall(__NR_ghost, GHOST_GTID_LOOKUP, id(), GHOST_GTID_LOOKUP_TGID,
-                   /*flags=*/0, &tgid);
-  if (rc == -1) return -1;
-  return tgid;
+// 64-bit gtids referring to normal tasks always have a positive value:
+// (0 | XX bits of actual pid_t | YY bit non-zero seqnum)
+// We calculate XX based on the maximum value that a pid may have and
+// then derive (YY = 63 - XX).
+int ghost_tid_seqnum_bits() {
+  static const int num_bits = [] {
+    int pid_max_max;
+    std::ifstream ifs("/proc/sys/kernel/pid_max_max");
+    if (!ifs) {
+      // We must be running on a kernel that predates 'kernel.pid_max_max'
+      // in which case we assume that PID_MAX_LIMIT is 4194304.
+      pid_max_max = 4194304;
+    } else {
+      ifs >> pid_max_max;
+    }
+
+    // Paranoia since __builtin_clz() is undefined for the zero value.
+    CHECK_GE(pid_max_max, 2);
+    const int xx = 32 - __builtin_clz(pid_max_max - 1);
+    const int yy = 63 - xx;
+    return yy;
+  }();
+
+  return num_bits;
 }
 
-pid_t Gtid::tid() const { return gtid_raw_ >> GHOST_TID_SEQNUM_BITS; }
-
-int64_t GetGtid() {
+int64_t GetGtidFromFile(FILE *stream) {
   int64_t gtid;
+  if (fscanf(stream, "%ld", &gtid) != 1) return -1;
+  return gtid;
+}
 
-  std::string gtid_path = absl::StrCat("/proc/", GetTID(), "/ghost/gtid");
+int64_t gtid(int64_t pid) {
+  int64_t gtid = -1;
+  FILE *stream =
+      fopen(absl::StrCat("/proc/", pid, "/ghost/gtid").c_str(), "r");
+  if (stream) {
+    gtid = GetGtidFromFile(stream);
+    fclose(stream);
+  }
+  if (gtid < 0) {  // Fallback to syscall.
+    gtid = pid << ghost_tid_seqnum_bits();
+  }
+  return gtid;
+}
 
-  std::ifstream ifs(gtid_path);
-  if (ifs) {
-    ifs >> gtid;
-  } else {  // Fallback to syscall.
-    int ret = syscall(__NR_ghost, GHOST_BASE_GET_GTID, &gtid);
-    if (ABSL_PREDICT_FALSE(ret < 0)) {
-      gtid = (int64_t)GetTID() << GHOST_TID_SEQNUM_BITS;
+int64_t GetTgidFromFile(FILE *stream) {
+  int64_t tgid = -1;
+  char* line = NULL;
+  size_t len = 0;
+  while (getline(&line, &len, stream) != -1) {
+    std::istringstream iss(line);
+    std::string field;
+    iss >> field;
+    if (iss && field == "Tgid:") {
+      iss >> tgid;
+      break;
     }
   }
 
-  return gtid;
+  free(line);
+  return tgid;
 }
+
+pid_t Gtid::tgid() const {
+  int64_t pid = tid(), tgid = -1, gtid;
+  int statusfd = -1, gtidfd = -1;
+  FILE *status_stream = NULL, *gtid_stream = NULL;
+
+  int dirfd = open(absl::StrCat("/proc/", pid).c_str(), O_RDONLY);
+  if (dirfd < 0) {
+    goto done;
+  }
+
+  statusfd = openat(dirfd, "status", O_RDONLY);
+  if (statusfd < 0) {
+    goto done;
+  }
+
+  gtidfd = openat(dirfd, "ghost/gtid", O_RDONLY);
+  if (gtidfd < 0) {
+    goto done;
+  }
+
+  status_stream = fdopen(statusfd, "r");
+  if (!status_stream) {
+    goto done;
+  }
+  statusfd = -1;  // 'status_stream' now owns the underlying fd.
+
+  gtid_stream = fdopen(gtidfd, "r");
+  if (!gtid_stream) {
+    goto done;
+  }
+  gtidfd = -1;  // 'gtid_stream' now owns the underlying fd.
+
+  tgid = GetTgidFromFile(status_stream);
+  gtid = GetGtidFromFile(gtid_stream);
+
+  if (gtid != id()) {  // Check for pid recycling.
+    tgid = -1;
+  }
+
+done:
+  if (gtid_stream) {
+    CHECK_LT(gtidfd, 0);
+    fclose(gtid_stream);
+  }
+
+  if (status_stream) {
+    CHECK_LT(statusfd, 0);
+    fclose(status_stream);
+  }
+
+  if (gtidfd >= 0) {
+    close(gtidfd);
+  }
+
+  if (statusfd >= 0) {
+    close(statusfd);
+  }
+
+  if (dirfd >= 0) {
+    close(dirfd);
+  }
+
+  return tgid;
+}
+
+pid_t Gtid::tid() const { return gtid_raw_ >> ghost_tid_seqnum_bits(); }
+
+int64_t GetGtid() { return gtid(GetTID()); }
 
 ABSL_CONST_INIT static absl::base_internal::SpinLock gtid_name_map_lock(
     absl::kConstInit, absl::base_internal::SCHEDULE_KERNEL_ONLY);
@@ -240,13 +344,15 @@ void ForkedProcess::HandleSigchild(int signum) {
   }
 }
 
-ForkedProcess::ForkedProcess() {
+ForkedProcess::ForkedProcess(int stderr_fd) {
   pid_t ppid = getpid();
   pid_t p = fork();
 
   CHECK_GE(p, 0);
 
   if (p == 0) {
+    CHECK_EQ(dup2(stderr_fd, 2), 2);
+
     // Drop our parent's children. No need to lock, since we're single threaded.
     ForkedProcess::GetAllChildren().clear();
 

@@ -85,8 +85,8 @@ constexpr int kPingAgents = 2;
 constexpr int kRpcSerialize = 3;
 constexpr int kRpcDeserializeArgs = 4;
 
-template <size_t MAX_NOTIFICATIONS = 1, class ENCLAVE = LocalEnclave>
-class FullSimpleAgent : public FullAgent<ENCLAVE> {
+template <size_t MAX_NOTIFICATIONS = 1, class EnclaveType = LocalEnclave>
+class FullSimpleAgent : public FullAgent<EnclaveType> {
 #define AGENT_AS(agent) \
   agent_down_cast<SimpleAgent<MAX_NOTIFICATIONS>*>((agent).get())
 
@@ -112,7 +112,7 @@ class FullSimpleAgent : public FullAgent<ENCLAVE> {
   };
 
   explicit FullSimpleAgent(const AgentConfig& config)
-      : FullAgent<ENCLAVE>(config), channel_(GHOST_MAX_QUEUE_ELEMS, 0) {
+      : FullAgent<EnclaveType>(config), channel_(GHOST_MAX_QUEUE_ELEMS, 0) {
     channel_.SetEnclaveDefault();
     // Start an instance of SimpleAgent (above) on each cpu.
     this->StartAgentTasks();
@@ -206,6 +206,53 @@ TEST(AgentTest, RpcSerializationSimple) {
   EXPECT_EQ(s.x, deserialized.x);
   EXPECT_EQ(s.y, deserialized.y);
   EXPECT_EQ(s.z, deserialized.z);
+}
+
+// Basic test of serialization/deserialization, doing these operations in-place
+// rather than via the RPC interface. This test uses the `Serialize<T>()` and
+// `Deserialize<T>()` functions with the `size_t size` parameter.
+TEST(AgentTest, RpcSerializationSimpleSize) {
+  struct MyStruct {
+    int x, y, z;
+  };
+  const MyStruct s = {
+      .x = 3,
+      .y = 5,
+      .z = INT_MIN,
+  };
+  AgentRpcResponse response;
+  response.buffer.Serialize<MyStruct>(s, sizeof(s));
+
+  MyStruct deserialized;
+  memset(&deserialized, 0, sizeof(deserialized));
+  response.buffer.Deserialize<MyStruct>(deserialized, sizeof(s));
+
+  EXPECT_EQ(s.x, deserialized.x);
+  EXPECT_EQ(s.y, deserialized.y);
+  EXPECT_EQ(s.z, deserialized.z);
+}
+
+// Basic test of vector serialization/deserialization.
+TEST(AgentTest, RpcSerializationSimpleVector) {
+  struct MyStruct {
+    int x, y, z;
+  };
+
+  static constexpr int kNumIterations = 10;
+  std::vector<MyStruct> to_serialize;
+  for (int i = 0; i < kNumIterations; i++) {
+    to_serialize.push_back({.x = i, .y = i + 2, .z = INT_MIN + i});
+  }
+  AgentRpcResponse response;
+  response.buffer.SerializeVector<MyStruct>(to_serialize);
+
+  std::vector<MyStruct> deserialized =
+      response.buffer.DeserializeVector<MyStruct>(kNumIterations);
+  for (int i = 0; i < kNumIterations; i++) {
+    EXPECT_EQ(to_serialize[i].x, deserialized[i].x);
+    EXPECT_EQ(to_serialize[i].y, deserialized[i].y);
+    EXPECT_EQ(to_serialize[i].z, deserialized[i].z);
+  }
 }
 
 // Tests the serialization mechanism over the RPC interface.
@@ -326,13 +373,13 @@ int CountCpuTicks(Channel* channel) {
 
 constexpr int kTickChecker = 3;
 
-template <class ENCLAVE = LocalEnclave>
-class FullTickAgent : public FullAgent<ENCLAVE> {
+template <class EnclaveType = LocalEnclave>
+class FullTickAgent : public FullAgent<EnclaveType> {
 #define AGENT_AS(agent) agent_down_cast<SpinningAgent*>((agent).get())
 
  public:
   explicit FullTickAgent(const TickConfig& config)
-      : FullAgent<ENCLAVE>(config),
+      : FullAgent<EnclaveType>(config),
         default_channel_(GHOST_MAX_QUEUE_ELEMS, config.numa_node_),
         agent_channel_(GHOST_MAX_QUEUE_ELEMS, config.numa_node_) {
     default_channel_.SetEnclaveDefault();
@@ -491,6 +538,7 @@ TEST(AgentTest, MsgTimerExpired) {
     const ghost_msg_payload_timer* payload =
         static_cast<const ghost_msg_payload_timer*>(msg.payload());
     ASSERT_THAT(payload->cpu, Eq(cpu.id()));
+    ASSERT_THAT(payload->type, Eq(fd));
     ASSERT_THAT(payload->cookie, Eq(fd));
 
     msgs[cpu.id()]++;
@@ -547,10 +595,11 @@ TEST(AgentTest, MsgTimerExpired) {
       .it_value = absl::ToTimespec(kPeriod),     // periodic expiration.
   };
 
+  const uint64_t type = fd;
   const uint64_t cookie = fd;
-  ASSERT_THAT(
-      Ghost::TimerFdSettime(fd, /*flags=*/0, &itimerspec, target_cpu, cookie),
-      Eq(0));
+  ASSERT_THAT(Ghost::TimerFdSettime(fd, /*flags=*/0, &itimerspec, target_cpu,
+                                    type, cookie),
+              Eq(0));
 
   // Sleep for 50 msec.
   const absl::Duration kDelay = absl::Milliseconds(50);

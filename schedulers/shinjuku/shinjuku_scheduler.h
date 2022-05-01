@@ -31,7 +31,7 @@
 namespace ghost {
 
 // Store information about a scheduled task.
-struct ShinjukuTask : public Task {
+struct ShinjukuTask : public Task<> {
   enum class RunState {
     kBlocked,
     kQueued,
@@ -54,7 +54,7 @@ struct ShinjukuTask : public Task {
   };
 
   explicit ShinjukuTask(Gtid shinjuku_task_gtid, struct ghost_sw_info sw_info)
-      : Task(shinjuku_task_gtid, sw_info) {}
+      : Task<>(shinjuku_task_gtid, sw_info) {}
   ~ShinjukuTask() override {}
 
   bool paused() const { return run_state == RunState::kPaused; }
@@ -370,11 +370,11 @@ class ShinjukuConfig : public AgentConfig {
 
 // An global agent scheduler.  It runs a single-threaded Shinjuku scheduler on
 // the global_cpu.
-template <class ENCLAVE>
-class FullShinjukuAgent : public FullAgent<ENCLAVE> {
+template <class EnclaveType>
+class FullShinjukuAgent : public FullAgent<EnclaveType> {
  public:
   explicit FullShinjukuAgent(ShinjukuConfig config)
-      : FullAgent<ENCLAVE>(config) {
+      : FullAgent<EnclaveType>(config) {
     global_scheduler_ = SingleThreadShinjukuScheduler(
         &this->enclave_, *this->enclave_.cpus(), config.global_cpu_.id(),
         config.preemption_time_slice_);

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef GHOST_SCHEDULERS_SOL_SOL_SCHEDULER_H
-#define GHOST_SCHEDULERS_SOL_SOL_SCHEDULER_H
+#ifndef GHOST_SCHEDULERS_FIFO_CENTRALIZED_FIFO_SCHEDULER_H
+#define GHOST_SCHEDULERS_FIFO_CENTRALIZED_FIFO_SCHEDULER_H
 
 #include <cstdint>
 #include <map>
@@ -27,43 +27,39 @@
 namespace ghost {
 
 // Store information about a scheduled task.
-struct SolTask : public Task<> {
+struct FifoTask : public Task<> {
   enum class RunState {
     kBlocked,
     kQueued,
     kRunnable,
     kOnCpu,
     kYielding,
-    kPending,
   };
 
-  explicit SolTask(Gtid sol_task_gtid, ghost_sw_info sw_info)
-      : Task<>(sol_task_gtid, sw_info) {}
-  ~SolTask() override {}
+  FifoTask(Gtid fifo_task_gtid, ghost_sw_info sw_info)
+      : Task<>(fifo_task_gtid, sw_info) {}
+  ~FifoTask() override {}
 
   bool blocked() const { return run_state == RunState::kBlocked; }
   bool queued() const { return run_state == RunState::kQueued; }
   bool runnable() const { return run_state == RunState::kRunnable; }
   bool oncpu() const { return run_state == RunState::kOnCpu; }
   bool yielding() const { return run_state == RunState::kYielding; }
-  bool pending() const { return run_state == RunState::kPending; }
 
-  static std::string_view RunStateToString(SolTask::RunState run_state) {
+  static std::string_view RunStateToString(FifoTask::RunState run_state) {
     switch (run_state) {
-      case SolTask::RunState::kBlocked:
+      case FifoTask::RunState::kBlocked:
         return "Blocked";
-      case SolTask::RunState::kQueued:
+      case FifoTask::RunState::kQueued:
         return "Queued";
-      case SolTask::RunState::kRunnable:
+      case FifoTask::RunState::kRunnable:
         return "Runnable";
-      case SolTask::RunState::kOnCpu:
+      case FifoTask::RunState::kOnCpu:
         return "OnCpu";
-      case SolTask::RunState::kYielding:
+      case FifoTask::RunState::kYielding:
         return "Yielding";
-      case SolTask::RunState::kPending:
-        return "Pending";
         // We will get a compile error if a new member is added to the
-        // `SolTask::RunState` enum and a corresponding case is not added
+        // `FifoTask::RunState` enum and a corresponding case is not added
         // here.
     }
     CHECK(false);
@@ -71,7 +67,7 @@ struct SolTask : public Task<> {
   }
 
   friend std::ostream& operator<<(std::ostream& os,
-                                  SolTask::RunState run_state) {
+                                  FifoTask::RunState run_state) {
     os << RunStateToString(run_state);
     return os;
   }
@@ -84,30 +80,30 @@ struct SolTask : public Task<> {
   bool prio_boost = false;
 };
 
-class SolScheduler : public BasicDispatchScheduler<SolTask> {
+class FifoScheduler : public BasicDispatchScheduler<FifoTask> {
  public:
-  explicit SolScheduler(Enclave* enclave, CpuList cpulist,
-                        std::shared_ptr<TaskAllocator<SolTask>> allocator,
-                        int32_t global_cpu);
-  ~SolScheduler() final;
+  FifoScheduler(Enclave* enclave, CpuList cpulist,
+                std::shared_ptr<TaskAllocator<FifoTask>> allocator,
+                int32_t global_cpu);
+  ~FifoScheduler();
 
-  void EnclaveReady() final;
-  Channel& GetDefaultChannel() final { return global_channel_; };
+  void EnclaveReady();
+  Channel& GetDefaultChannel() { return global_channel_; };
 
   // Handles task messages received from the kernel via shared memory queues.
-  void TaskNew(SolTask* task, const Message& msg) final;
-  void TaskRunnable(SolTask* task, const Message& msg) final;
-  void TaskDeparted(SolTask* task, const Message& msg) final;
-  void TaskDead(SolTask* task, const Message& msg) final;
-  void TaskYield(SolTask* task, const Message& msg) final;
-  void TaskBlocked(SolTask* task, const Message& msg) final;
-  void TaskPreempted(SolTask* task, const Message& msg) final;
+  void TaskNew(FifoTask* task, const Message& msg);
+  void TaskRunnable(FifoTask* task, const Message& msg);
+  void TaskDeparted(FifoTask* task, const Message& msg);
+  void TaskDead(FifoTask* task, const Message& msg);
+  void TaskYield(FifoTask* task, const Message& msg);
+  void TaskBlocked(FifoTask* task, const Message& msg);
+  void TaskPreempted(FifoTask* task, const Message& msg);
 
   // Handles cpu "not idle" message. Currently a nop.
-  void CpuNotIdle(const Message& msg) final;
+  void CpuNotIdle(const Message& msg);
 
   // Handles cpu "timer expired" messages. Currently a nop.
-  void CpuTimerExpired(const Message& msg) final;
+  void CpuTimerExpired(const Message& msg);
 
   bool Empty() { return num_tasks_ == 0; }
 
@@ -117,7 +113,7 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
   void ValidatePreExitState();
 
   // Removes 'task' from the runqueue.
-  void RemoveFromRunqueue(SolTask* task);
+  void RemoveFromRunqueue(FifoTask* task);
 
   // Main scheduling function for the global agent.
   void GlobalSchedule(const StatusWord& agent_sw,
@@ -132,24 +128,6 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
     global_cpu_.store(cpu.id(), std::memory_order_release);
   }
 
-  void EnterSchedule() {
-    CHECK_EQ(schedule_timer_start_, absl::UnixEpoch());
-    schedule_timer_start_ = ghost::MonotonicNow();
-  }
-
-  void ExitSchedule() {
-    CHECK_NE(schedule_timer_start_, absl::UnixEpoch());
-    schedule_durations_ += ghost::MonotonicNow() - schedule_timer_start_;
-    schedule_timer_start_ = absl::UnixEpoch();
-    ++iterations_;
-  }
-
-  absl::Duration SchedulingOverhead() {
-    absl::Duration ret = schedule_durations_ / iterations_;
-    schedule_durations_ = absl::ZeroDuration();
-    return ret;
-  }
-
   // When a different scheduling class (e.g., CFS) has a task to run on the
   // global agent's CPU, the global agent calls this function to try to pick a
   // new CPU to move to and, if a new CPU is found, to initiate the handoff
@@ -159,32 +137,37 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
 
   // Print debug details about the current tasks managed by the global agent,
   // CPU state, and runqueue stats.
-  void DumpState(const Cpu& cpu, int flags) final;
+  void DumpState(const Cpu& cpu, int flags);
   std::atomic<bool> debug_runqueue_ = false;
 
   static const int kDebugRunqueue = 1;
-  static const int kGetSchedOverhead = 2;
 
  private:
   struct CpuState {
-    SolTask* current = nullptr;
-    SolTask* next = nullptr;
+    FifoTask* current = nullptr;
     const Agent* agent = nullptr;
   } ABSL_CACHELINE_ALIGNED;
 
-  bool SyncCpuState(const Cpu& cpu);
-  void SyncTaskState(SolTask* task);
-  bool PreemptTask(SolTask* prev, SolTask* next,
+  // Unschedule `prev` from the CPU it is currently running on. If `next` is not
+  // NULL, then `next` is scheduled in place of `prev` (all done in a single
+  // transaction). If `next` is NULL, then `prev` is just unscheduled (all done
+  // in a single transaction).
+  bool PreemptTask(FifoTask* prev, FifoTask* next,
                    StatusWord::BarrierToken agent_barrier);
 
+  // Updates the state of `task` to reflect that it is now running on `cpu`.
+  // This method should be called after a transaction scheduling `task` onto
+  // `cpu` succeeds.
+  void TaskOnCpu(FifoTask* task, const Cpu& cpu);
+
   // Marks a task as yielded.
-  void Yield(SolTask* task);
+  void Yield(FifoTask* task);
 
   // Adds a task to the FIFO runqueue.
-  void Enqueue(SolTask* task);
+  void Enqueue(FifoTask* task);
 
   // Removes and returns the task at the front of the runqueue.
-  SolTask* Dequeue();
+  FifoTask* Dequeue();
 
   // Prints all tasks (includin tasks not running or on the runqueue) managed by
   // the global agent.
@@ -195,7 +178,7 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
   // is currently using the CPU.
   bool Available(const Cpu& cpu);
 
-  CpuState* cpu_state_of(const SolTask* task);
+  CpuState* cpu_state_of(const FifoTask* task);
 
   CpuState* cpu_state(const Cpu& cpu) { return &cpu_states_[cpu.id()]; }
 
@@ -210,55 +193,55 @@ class SolScheduler : public BasicDispatchScheduler<SolTask> {
   Channel global_channel_;
   int num_tasks_ = 0;
 
-  std::deque<SolTask*> run_queue_;
-  std::vector<SolTask*> yielding_tasks_;
+  std::deque<FifoTask*> run_queue_;
+  std::vector<FifoTask*> yielding_tasks_;
 
   absl::Time schedule_timer_start_;
   absl::Duration schedule_durations_;
   uint64_t iterations_ = 0;
 };
 
-// Initializes the task allocator and the Sol scheduler.
-std::unique_ptr<SolScheduler> SingleThreadSolScheduler(Enclave* enclave,
-                                                       CpuList cpulist,
-                                                       int32_t global_cpu);
+// Initializes the task allocator and the FIFO scheduler.
+std::unique_ptr<FifoScheduler> SingleThreadFifoScheduler(Enclave* enclave,
+                                                         CpuList cpulist,
+                                                         int32_t global_cpu);
 
 // Operates as the Global or Satellite agent depending on input from the
 // global_scheduler->GetGlobalCPU callback.
-class SolAgent : public Agent {
+class FifoAgent : public Agent {
  public:
-  SolAgent(Enclave* enclave, Cpu cpu, SolScheduler* global_scheduler)
+  FifoAgent(Enclave* enclave, Cpu cpu, FifoScheduler* global_scheduler)
       : Agent(enclave, cpu), global_scheduler_(global_scheduler) {}
 
   void AgentThread() override;
   Scheduler* AgentScheduler() const override { return global_scheduler_; }
 
  private:
-  SolScheduler* global_scheduler_;
+  FifoScheduler* global_scheduler_;
 };
 
-class SolConfig : public AgentConfig {
+class FifoConfig : public AgentConfig {
  public:
-  SolConfig() {}
-  SolConfig(Topology* topology, CpuList cpulist, Cpu global_cpu)
+  FifoConfig() {}
+  FifoConfig(Topology* topology, CpuList cpulist, Cpu global_cpu)
       : AgentConfig(topology, std::move(cpulist)), global_cpu_(global_cpu) {}
 
   Cpu global_cpu_{Cpu::UninitializedType::kUninitialized};
 };
 
-// An global agent scheduler.  It runs a single-threaded Sol scheduler on the
+// A global agent scheduler. It runs a single-threaded FIFO scheduler on the
 // global_cpu.
 template <class EnclaveType>
-class FullSolAgent : public FullAgent<EnclaveType> {
+class FullFifoAgent : public FullAgent<EnclaveType> {
  public:
-  explicit FullSolAgent(SolConfig config) : FullAgent<EnclaveType>(config) {
-    global_scheduler_ = SingleThreadSolScheduler(
+  explicit FullFifoAgent(FifoConfig config) : FullAgent<EnclaveType>(config) {
+    global_scheduler_ = SingleThreadFifoScheduler(
         &this->enclave_, *this->enclave_.cpus(), config.global_cpu_.id());
     this->StartAgentTasks();
     this->enclave_.Ready();
   }
 
-  ~FullSolAgent() override {
+  ~FullFifoAgent() override {
     global_scheduler_->ValidatePreExitState();
 
     // Terminate global agent before satellites to avoid a false negative error
@@ -283,20 +266,16 @@ class FullSolAgent : public FullAgent<EnclaveType> {
   }
 
   std::unique_ptr<Agent> MakeAgent(const Cpu& cpu) override {
-    return absl::make_unique<SolAgent>(&this->enclave_, cpu,
-                                       global_scheduler_.get());
+    return absl::make_unique<FifoAgent>(&this->enclave_, cpu,
+                                        global_scheduler_.get());
   }
 
   void RpcHandler(int64_t req, const AgentRpcArgs& args,
                   AgentRpcResponse& response) override {
     switch (req) {
-      case SolScheduler::kDebugRunqueue:
+      case FifoScheduler::kDebugRunqueue:
         global_scheduler_->debug_runqueue_ = true;
         response.response_code = 0;
-        return;
-      case SolScheduler::kGetSchedOverhead:
-        response.response_code = absl::ToInt64Nanoseconds(
-            global_scheduler_->SchedulingOverhead());
         return;
       default:
         response.response_code = -1;
@@ -305,9 +284,9 @@ class FullSolAgent : public FullAgent<EnclaveType> {
   }
 
  private:
-  std::unique_ptr<SolScheduler> global_scheduler_;
+  std::unique_ptr<FifoScheduler> global_scheduler_;
 };
 
 }  // namespace ghost
 
-#endif  // GHOST_SCHEDULERS_SOL_SOL_SCHEDULER_H
+#endif  // GHOST_SCHEDULERS_FIFO_CENTRALIZED_FIFO_SCHEDULER_H

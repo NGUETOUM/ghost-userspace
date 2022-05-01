@@ -57,6 +57,7 @@ class AgentConfig {
   CpuList cpus_;
   int enclave_fd_ = -1;
   CpuTickConfig tick_config_ = CpuTickConfig::kNoTicks;
+  int stderr_fd = 2;
 
   explicit AgentConfig(Topology* topology = nullptr,
                        CpuList cpus = MachineTopology()->EmptyCpuList())
@@ -105,7 +106,7 @@ class Enclave {
 
   // The agent calls this when it wants to yield its CPU without scheduling a
   // task on its own CPU.
-  virtual bool LocalYieldRunRequest(const RunRequest* req,
+  virtual void LocalYieldRunRequest(const RunRequest* req,
                                     StatusWord::BarrierToken agent_barrier,
                                     int flags) = 0;
 
@@ -143,7 +144,7 @@ class Enclave {
 
   // Runs l on every non-agent, ghost-task status word.
   virtual void ForEachTaskStatusWord(
-      std::function<void(struct ghost_status_word* sw, uint32_t region_id,
+      std::function<void(ghost_status_word* sw, uint32_t region_id,
                          uint32_t idx)>
           l) = 0;
 
@@ -273,6 +274,15 @@ struct RunRequestOptions {
 //     implemented by an Enclave.
 class RunRequest {
  public:
+  RunRequest() : cpu_(Cpu::UninitializedType::kUninitialized) {}
+  void Init(Enclave* enclave, Cpu cpu, ghost_txn* txn) {
+    enclave_ = enclave;
+    cpu_ = cpu;
+
+    CHECK_EQ(txn->cpu, cpu.id());
+    txn_ = txn;
+  }
+
   // Opens a transaction for later commit (sync or async depending on the
   // value of `commit_flags`).
   //
@@ -310,9 +320,9 @@ class RunRequest {
   //
   // REQUIRES: Must be called by the agent of cpu().
   // TODO: This could locally submit when there's a READY transaction.
-  bool LocalYield(const StatusWord::BarrierToken agent_barrier,
+  void LocalYield(const StatusWord::BarrierToken agent_barrier,
                   const int flags) {
-    return enclave_->LocalYieldRunRequest(this, agent_barrier, flags);
+    enclave_->LocalYieldRunRequest(this, agent_barrier, flags);
   }
 
   // Ping() and queued-runs could interact with each other (when Ping clobbers
@@ -376,16 +386,9 @@ class RunRequest {
 
   uint64_t cpu_seqnum() const { return txn_->cpu_seqnum; }
 
+  ghost_txn* txn() { return txn_; }
+
  private:
-  RunRequest() : cpu_(Cpu::UninitializedType::kUninitialized) {}
-  void Init(Enclave* enclave, Cpu cpu, struct ghost_txn* txn) {
-    enclave_ = enclave;
-    cpu_ = cpu;
-
-    CHECK_EQ(txn->cpu, cpu.id());
-    txn_ = txn;
-  }
-
   // These are helper functions for the state-checking functions above. These
   // are useful because the caller may only want to call `state()` once since
   // that function does an atomic read and its value may change between
@@ -401,11 +404,8 @@ class RunRequest {
 
   Cpu cpu_;
   Enclave* enclave_ = nullptr;
-  struct ghost_txn* txn_ = nullptr;
+  ghost_txn* txn_ = nullptr;
   bool allow_txn_target_on_cpu_ = false;
-
-  friend class Enclave;
-  friend class LocalEnclave;
 };
 
 // An Enclave supporting execution on the local physical host.
@@ -421,7 +421,7 @@ class LocalEnclave final : public Enclave {
   bool CommitRunRequest(RunRequest* req) final;
   void SubmitRunRequest(RunRequest* req) final;
   bool CompleteRunRequest(RunRequest* req) final;
-  bool LocalYieldRunRequest(const RunRequest* req,
+  void LocalYieldRunRequest(const RunRequest* req,
                             StatusWord::BarrierToken agent_barrier,
                             int flags) final;
   bool PingRunRequest(const RunRequest* req) final;
@@ -436,6 +436,7 @@ class LocalEnclave final : public Enclave {
   void DetachAgent(Agent* agent) final;
 
   int GetNrTasks() { return LocalEnclave::GetNrTasks(dir_fd_); }
+  int GetAbiVersion() { return LocalEnclave::GetAbiVersion(dir_fd_); }
 
   void SetRunnableTimeout(absl::Duration d) final {
     WriteEnclaveTunable(dir_fd_, "runnable_timeout",
@@ -448,7 +449,7 @@ class LocalEnclave final : public Enclave {
 
   // Runs l on every non-agent, ghost-task status word.
   void ForEachTaskStatusWord(
-      const std::function<void(struct ghost_status_word* sw, uint32_t region_id,
+      const std::function<void(ghost_status_word* sw, uint32_t region_id,
                                uint32_t idx)>
           l) final;
 
@@ -470,6 +471,7 @@ class LocalEnclave final : public Enclave {
   // (either 0 or 1) at some point in time.
   static void WaitForAgentOnlineValue(int dir_fd, int until);
   static int GetNrTasks(int dir_fd);
+  static int GetAbiVersion(int dir_fd);
   static void DestroyEnclave(int ctl_fd);
   static void DestroyAllEnclaves();
 
@@ -486,12 +488,9 @@ class LocalEnclave final : public Enclave {
     RunRequest req;
   } ABSL_CACHELINE_ALIGNED;
 
-  struct CpuRep* rep(const Cpu& cpu) {
-    return &cpus_[cpu.id()];
-  }
+  CpuRep* rep(const Cpu& cpu) { return &cpus_[cpu.id()]; }
 
-  constexpr static int kMaxCpus = 512;
-  CpuRep cpus_[kMaxCpus];
+  CpuRep cpus_[MAX_CPUS];
   ghost_cpu_data* data_region_ = nullptr;
   size_t data_region_size_ = 0;
   bool destroy_when_destructed_;

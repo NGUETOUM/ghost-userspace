@@ -36,9 +36,9 @@ enum class FifoTaskState {
 // For CHECK and friends.
 std::ostream& operator<<(std::ostream& os, const FifoTaskState& state);
 
-struct FifoTask : public Task {
-  explicit FifoTask(Gtid fifo_task_gtid, struct ghost_sw_info sw_info)
-      : Task(fifo_task_gtid, sw_info) {}
+struct FifoTask : public Task<> {
+  explicit FifoTask(Gtid fifo_task_gtid, ghost_sw_info sw_info)
+      : Task<>(fifo_task_gtid, sw_info) {}
   ~FifoTask() override {}
 
   inline bool blocked() const { return run_state == FifoTaskState::kBlocked; }
@@ -159,10 +159,10 @@ class FifoAgent : public Agent {
   FifoScheduler* scheduler_;
 };
 
-template <class ENCLAVE>
-class FullFifoAgent : public FullAgent<ENCLAVE> {
+template <class EnclaveType>
+class FullFifoAgent : public FullAgent<EnclaveType> {
  public:
-  explicit FullFifoAgent(AgentConfig config) : FullAgent<ENCLAVE>(config) {
+  explicit FullFifoAgent(AgentConfig config) : FullAgent<EnclaveType>(config) {
     scheduler_ =
         MultiThreadedFifoScheduler(&this->enclave_, *this->enclave_.cpus());
     this->StartAgentTasks();

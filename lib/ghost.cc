@@ -43,7 +43,8 @@ ABSL_FLAG(int32_t, verbose, 0, "Verbosity level");
 
 namespace ghost {
 
-StatusWordTable::StatusWordTable(int enclave_fd, int id, int numa_node) {
+LocalStatusWordTable::LocalStatusWordTable(int enclave_fd, int id,
+                                           int numa_node) {
   int ctl = openat(enclave_fd, "ctl", O_RDWR);
   CHECK_GE(ctl, 0);
   std::string cmd = absl::StrCat("create sw_region ", id, " ", numa_node);
@@ -55,7 +56,7 @@ StatusWordTable::StatusWordTable(int enclave_fd, int id, int numa_node) {
       openat(enclave_fd, absl::StrCat("sw_regions/sw_", id).c_str(), O_RDONLY);
   CHECK_GE(fd_, 0);
   map_size_ = GetFileSize(fd_);
-  header_ = static_cast<struct ghost_sw_region_header*>(
+  header_ = static_cast<ghost_sw_region_header*>(
       mmap(nullptr, map_size_, PROT_READ, MAP_SHARED, fd_, 0));
   CHECK_NE(header_, MAP_FAILED);
   CHECK_LT(0, header_->capacity);
@@ -67,12 +68,12 @@ StatusWordTable::StatusWordTable(int enclave_fd, int id, int numa_node) {
   CHECK_NE(table_, nullptr);
 }
 
-StatusWordTable::~StatusWordTable() {
-  munmap(header_, map_size_);
-  close(fd_);
+LocalStatusWordTable::~LocalStatusWordTable() {
+  CHECK_EQ(munmap(header_, map_size_), 0);
+  CHECK_EQ(close(fd_), 0);
 }
 
-static ghost_status_word* status_word_from_info(struct ghost_sw_info* sw_info) {
+static ghost_status_word* status_word_from_info(ghost_sw_info* sw_info) {
   StatusWordTable* table = Ghost::GetGlobalStatusWordTable();
   CHECK_EQ(sw_info->id, table->id());
   return table->get(sw_info->index);
@@ -104,7 +105,7 @@ StatusWord::StatusWord(AgentSW) {
   owner_ = Gtid::Current();
 }
 
-StatusWord::StatusWord(Gtid gtid, struct ghost_sw_info sw_info) {
+StatusWord::StatusWord(Gtid gtid, ghost_sw_info sw_info) {
   sw_info_ = sw_info;
   sw_ = status_word_from_info(&sw_info_);
   owner_ = gtid;
@@ -124,7 +125,12 @@ bool Ghost::GhostIsMountedAt(const char* path) {
   bool ret = false;
   FILE* mounts = setmntent("/proc/self/mounts", "r");
   CHECK_NE(mounts, nullptr);
+<<<<<<< HEAD
   struct mntent* ent;
+=======
+
+  mntent* ent;
+>>>>>>> 1c09b7447f33833e15e3e029199122f1fd429d27
   while ((ent = getmntent(mounts))) {
     if (!strcmp(Ghost::kGhostfsMount, ent->mnt_dir) && !strcmp("ghost", ent->mnt_type)) {
       ret = true;
@@ -147,9 +153,9 @@ void Ghost::MountGhostfs() {
   }
 }
 
-// Returns the version of ghOSt running in the kernel.
+// Returns the ghOSt abi versions supported by the kernel.
 // static
-int Ghost::GetVersion(uint64_t& version) {
+int Ghost::GetSupportedVersions(std::vector<uint32_t>& versions) {
   if (!GhostIsMountedAt(Ghost::kGhostfsMount)) {
     MountGhostfs();
   }
@@ -157,12 +163,17 @@ int Ghost::GetVersion(uint64_t& version) {
   if (!ver.is_open()) {
     return -1;
   }
+
   std::string line;
-  if (std::getline(ver, line) && absl::SimpleAtoi(line, &version)) {
-    return 0;
-  } else {
-    return -1;
+  while (std::getline(ver, line)) {
+    uint32_t v;
+    if (absl::SimpleAtoi(line, &v)) {
+      versions.push_back(v);
+    } else {
+      return -1;
+    }
   }
+  return 0;
 }
 
 // static
@@ -246,8 +257,13 @@ struct sched_attr {
 };
 #define SCHED_FLAG_RESET_ON_FORK 0x01
 
+// Magic values encoded in 'sched_attr.sched_priority' to indicate whether
+// a task is a normal ghost task or an agent.
+#define GHOST_SCHED_TASK_PRIO   0
+#define GHOST_SCHED_AGENT_PRIO  1
+
 int SchedTaskEnterGhost(pid_t pid, int ctl_fd) {
-  struct sched_attr attr = {
+  sched_attr attr = {
       .size = sizeof(sched_attr),
       .sched_policy = SCHED_GHOST,
       .sched_priority = GHOST_SCHED_TASK_PRIO,
@@ -264,7 +280,7 @@ int SchedTaskEnterGhost(pid_t pid, int ctl_fd) {
 }
 
 int SchedAgentEnterGhost(int ctl_fd, int queue_fd) {
-  struct sched_attr attr = {
+  sched_attr attr = {
       .size = sizeof(sched_attr),
       .sched_policy = SCHED_GHOST,
       // We don't want to leak ghOSt threads into the agent address space.

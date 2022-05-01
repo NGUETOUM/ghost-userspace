@@ -42,7 +42,7 @@ namespace ghost {
 
 class Orchestrator;
 
-struct EdfTask : public Task {
+struct EdfTask : public Task<> {
   enum class RunState {
     kBlocked = 0,
     kQueued = 1,
@@ -51,8 +51,8 @@ struct EdfTask : public Task {
     kPaused = 4,
   };
 
-  explicit EdfTask(Gtid edf_task_gtid, struct ghost_sw_info sw_info)
-      : Task(edf_task_gtid, sw_info) {}
+  explicit EdfTask(Gtid edf_task_gtid, ghost_sw_info sw_info)
+      : Task<>(edf_task_gtid, sw_info) {}
   ~EdfTask() override {}
 
   inline bool paused() const { return run_state == RunState::kPaused; }
@@ -272,10 +272,11 @@ class GlobalSatAgent : public Agent {
 
 // A global agent scheduler.  It runs a single-threaded EDF scheduler on the
 // global_cpu.
-template <class ENCLAVE>
-class GlobalEdfAgent : public FullAgent<ENCLAVE> {
+template <class EnclaveType>
+class GlobalEdfAgent : public FullAgent<EnclaveType> {
  public:
-  explicit GlobalEdfAgent(GlobalConfig config) : FullAgent<ENCLAVE>(config) {
+  explicit GlobalEdfAgent(GlobalConfig config)
+      : FullAgent<EnclaveType>(config) {
     global_scheduler_ = SingleThreadEdfScheduler(
         &this->enclave_, *this->enclave_.cpus(), config);
     this->StartAgentTasks();

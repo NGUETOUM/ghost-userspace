@@ -35,8 +35,6 @@
 
 namespace ghost {
 
-class Agent;
-
 // Encapsulation for the per-cpu agent threads.
 // Implementations should override "AgentThread()".
 class Agent {
@@ -139,36 +137,98 @@ struct AgentRpcBuffer {
   // Converts the input to raw bytes and stores them in the internal data array.
   // Note that T shouldn't contain any pointers, since these pointers will not
   // have meaning for the process on the other side of the shared memory region.
-  // See disclaimer attached to the comment for this struct.
+  // See disclaimer attached to the comment for this struct. `size` is the size
+  // of the type T. We have `size` as a parameter rather than use `sizeof(T)`
+  // since `sizeof(T)` does not produce the correct size for array pointers.
   template <class T>
-  void Serialize(const T& t) {
+  void Serialize(const T& t, size_t size) {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
-    static_assert(sizeof(T) <= BufferBytes,
-                  "Template type cannot be larger than the buffer.");
+    // Template type cannot be larger than the buffer.
+    CHECK_LE(size, BufferBytes);
 
     const std::byte* serialized =
         reinterpret_cast<const std::byte*>(&t);
-    std::copy_n(serialized, sizeof(T), std::begin(data));
+    std::copy_n(serialized, size, std::begin(data));
   }
 
-  // Converts the raw bytes in the internal data array to the given type.
-  // See disclaimer attached to the comment for this struct.
   template <class T>
-  T Deserialize() const {
+  void SerializeVector(const std::vector<T>& vt) {
     static_assert(std::is_trivially_copyable<T>::value,
                   "Template type needs to be trivially copyable.");
     static_assert(!std::is_pointer<T>::value,
                   "Template type must not be a pointer.");
+    // Template type cannot be larger than the buffer.
+    CHECK_LE(sizeof(T) * vt.size(), BufferBytes);
+
+    for (size_t i = 0; i < vt.size(); i++) {
+      const std::byte* serialized = reinterpret_cast<const std::byte*>(&vt[i]);
+      std::copy_n(serialized, sizeof(T), std::begin(data) + (sizeof(T) * i));
+    }
+  }
+
+  // See comment above for `Serialize<T>(const T& t, size_t size)`. This
+  // function does the same thing but assumes that the size of `T` is
+  // `sizeof(T)`. In some cases, such as array pointers, this is not true. In
+  // those cases, call `Serialize<T>(const T& t, size_t size)` above and pass
+  // the size to the `size` parameter.
+  template <class T>
+  void Serialize(const T& t) {
     static_assert(sizeof(T) <= BufferBytes,
                   "Template type cannot be larger than the buffer.");
+    Serialize(t, sizeof(T));
+  }
 
-    T t;
+  // Converts the raw bytes in the internal data array to the given type.
+  // See disclaimer attached to the comment for this struct. The deserialized
+  // output is written to `t`. `size` is the size of the type T. We have `size`
+  // as a parameter rather than use `sizeof(T)` since `sizeof(T)` does not
+  // produce the correct size for array pointers.
+  template <class T>
+  void Deserialize(T& t, size_t size) const {
+    static_assert(std::is_trivially_copyable<T>::value,
+                  "Template type needs to be trivially copyable.");
+    static_assert(!std::is_pointer<T>::value,
+                  "Template type must not be a pointer.");
+    // Template type cannot be larger than the buffer.
+    CHECK_LE(size, BufferBytes);
+
     std::byte* deserialized = reinterpret_cast<std::byte*>(&t);
-    std::copy_n(std::begin(data), sizeof(T), deserialized);
+    std::copy_n(std::begin(data), size, deserialized);
+  }
 
+  template <class T>
+  std::vector<T> DeserializeVector(size_t num_elements) const {
+    static_assert(std::is_trivially_copyable<T>::value,
+                  "Template type needs to be trivially copyable.");
+    static_assert(!std::is_pointer<T>::value,
+                  "Template type must not be a pointer.");
+    // Template type cannot be larger than the buffer.
+    CHECK_LE(sizeof(T) * num_elements, BufferBytes);
+
+    // Note that this construct `num_elements` instance of `T` using the default
+    // constructor for `T`.
+    std::vector<T> vt(num_elements);
+    for (size_t i = 0; i < num_elements; i++) {
+      std::byte* deserialized = reinterpret_cast<std::byte*>(&vt[i]);
+      std::copy_n(std::begin(data) + (sizeof(T) * i), sizeof(T), deserialized);
+    }
+    return vt;
+  }
+
+  // See comment above for `Deserialize<T>(size_t size)`. This function does the
+  // same thing but assumes that the size of `T` is `sizeof(T)`. In some cases,
+  // such as array pointers, this is not true. In those cases, call
+  // `Deserialize<T>(size_t size)` above and pass the size to the `size`
+  // parameter.
+  template <class T>
+  T Deserialize() const {
+    static_assert(sizeof(T) <= BufferBytes,
+                  "Template type cannot be larger than the buffer.");
+    T t;
+    Deserialize<T>(t, sizeof(T));
     return t;
   }
 
@@ -201,7 +261,7 @@ struct AgentRpcResponse {
   // Most RPC functions will only need to return a value via this response_code.
   int64_t response_code = -1;
 
-  // This response buffer may be used to serialize arbitrary plan-old-data as
+  // This response buffer may be used to serialize arbitrary plain-old-data as
   // part of the RPC response.
   AgentRpcBuffer<> buffer;
 };
@@ -216,7 +276,7 @@ struct AgentRpcResponse {
 //
 // Most agents operate on a LocalEnclave (i.e. the kernel ABI), but you can
 // replace that with any Enclave
-template <class ENCLAVE = LocalEnclave>
+template <class EnclaveType = LocalEnclave>
 class FullAgent {
  public:
   explicit FullAgent(AgentConfig config) : enclave_(config) {
@@ -244,7 +304,7 @@ class FullAgent {
   //
   //     this->StartAgentTasks();
   //
-  // Writing this out as FullAgent<ENCLAVE>::StartAgentTasks() also works
+  // Writing this out as FullAgent<EnclaveType>::StartAgentTasks() also works
   // but 'this' is easier to type.
   //
   // Details at https://gcc.gnu.org/onlinedocs/gcc/Name-lookup.html
@@ -285,7 +345,7 @@ class FullAgent {
     agents_.clear();
   }
 
-  ENCLAVE enclave_;
+  EnclaveType enclave_;
   std::vector<std::unique_ptr<Agent>> agents_;
 };
 
@@ -362,7 +422,7 @@ class AgentProcess {
   explicit AgentProcess(AGENT_CONFIG config) {
     sb_ = absl::make_unique<SharedBlob>();
 
-    agent_proc_ = absl::make_unique<ForkedProcess>();
+    agent_proc_ = absl::make_unique<ForkedProcess>(config.stderr_fd);
     if (!agent_proc_->IsChild()) {
       sb_->agent_ready_.WaitForNotification();
       return;
@@ -390,6 +450,7 @@ class AgentProcess {
         sb_->rpc_done_.Notify();
       }
     });
+    rpc_handler.detach();
 
     sb_->agent_ready_.Notify();
     sb_->kill_agent_.WaitForNotification();

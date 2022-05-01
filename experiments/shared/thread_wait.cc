@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "experiments/shared/cfs.h"
+#include "experiments/shared/thread_wait.h"
 
 namespace ghost_test {
 
-CompletelyFairScheduler::CompletelyFairScheduler(uint32_t num_threads,
-                                                 WaitType wait_type)
+ThreadWait::ThreadWait(uint32_t num_threads, WaitType wait_type)
     : num_threads_(num_threads), wait_type_(wait_type) {
   runnability_.reserve(num_threads);
   for (uint32_t i = 0; i < num_threads_; i++) {
@@ -25,31 +24,31 @@ CompletelyFairScheduler::CompletelyFairScheduler(uint32_t num_threads,
   }
 }
 
-void CompletelyFairScheduler::MarkRunnable(uint32_t sid) {
+void ThreadWait::MarkRunnable(uint32_t sid) {
   CHECK_LT(sid, num_threads_);
 
   runnability_[sid]->store(1, std::memory_order_release);
-  if (wait_type_ == WaitType::kWaitFutex) {
+  if (wait_type_ == WaitType::kFutex) {
     ghost::Futex::Wake(runnability_[sid].get(), 1);
   }
 }
 
-void CompletelyFairScheduler::MarkIdle(uint32_t sid) {
+void ThreadWait::MarkIdle(uint32_t sid) {
   CHECK_LT(sid, num_threads_);
 
   runnability_[sid]->store(0, std::memory_order_release);
 }
 
-void CompletelyFairScheduler::WaitUntilRunnable(uint32_t sid) const {
+void ThreadWait::WaitUntilRunnable(uint32_t sid) const {
   CHECK_LT(sid, num_threads_);
 
   const std::unique_ptr<std::atomic<int>>& r = runnability_[sid];
-  if (wait_type_ == WaitType::kWaitSpin) {
+  if (wait_type_ == WaitType::kSpin) {
     while (r->load(std::memory_order_acquire) == 0) {
       asm volatile("pause");
     }
   } else {
-    CHECK_EQ(wait_type_, WaitType::kWaitFutex);
+    CHECK_EQ(wait_type_, WaitType::kFutex);
 
     ghost::Futex::Wait(r.get(), 0);
   }
