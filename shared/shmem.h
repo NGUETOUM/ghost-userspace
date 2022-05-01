@@ -52,6 +52,7 @@ class GhostShmem {
   // Connects to the region identified by "name", hosted by the process "pid".
   // REQUIRES: "pid" hosting "name" must exist.
   bool Attach(int64_t client_version, const char* name, pid_t pid);
+  bool Attach(int64_t client_version, const char* name, pid_t pid, int fd);
 
   // Called by clients when they are aready for remote connections to proceed.
   // REQUIRES: Must be called.
@@ -88,6 +89,7 @@ class GhostShmem {
   }
   void CreateShmem(int64_t client_version, const char* suffix, size_t size);
   bool ConnectShmem(int64_t client_version, const char* suffix, pid_t pid);
+  bool ConnectShmem(int64_t client_version, const char* suffix, pid_t pid, int fd);
 
   // These members describe the shared memory area.
   void* shmem_ = nullptr;
@@ -98,6 +100,7 @@ class GhostShmem {
   void* data_;
 
   static int OpenGhostShmemFd(const char* suffix, pid_t pid);
+  static int OpenGhostShmemFd(const char* suffix, pid_t pid, int fd_file);
   static constexpr int kHeaderReservedBytes = 4096;  // PAGE_SIZE
 };
 

@@ -122,7 +122,7 @@ class Ghost {
   static inline uint64_t ToRawDeadline(absl::Time deadline) {
     return absl::ToUnixNanos(deadline);
   }
-
+ ghost::PrioTable table_;
  private:
   // Checks that 'sid' (i.e., the sched item identifier) is in range. If not,
   // this indicates a bug since the caller is trying to access a sched item that
@@ -155,7 +155,7 @@ class Ghost {
   // for this index.
   static constexpr uint32_t kNumUpdatedIndexRetries = 3;
 
-  ghost::PrioTable table_;
+
 };
 
 }  // namespace ghost_test

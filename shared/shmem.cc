@@ -78,6 +78,10 @@ bool GhostShmem::Attach(int64_t client_version, const char* name, pid_t pid) {
   return ConnectShmem(client_version, name, pid);
 }
 
+bool GhostShmem::Attach(int64_t client_version, const char* name, pid_t pid, int fd) {
+  return ConnectShmem(client_version, name, pid, fd);
+}
+
 GhostShmem::~GhostShmem() {
   if (hdr_) {
     hdr_->finished.store(true);
@@ -184,6 +188,50 @@ bool GhostShmem::ConnectShmem(int64_t client_version, const char* suffix,
   return true;
 }
 
+bool GhostShmem::ConnectShmem(int64_t client_version, const char* suffix,
+                              pid_t pid, int fd) {
+  memfd_ = OpenGhostShmemFd(suffix, pid, fd);
+  //memfd_ = fd;
+  if (memfd_ < 0) {
+    return false;
+  }
+
+ printf("\n memfd_ in connect is %d \n", memfd_);
+
+  struct stat sb;
+  CHECK_ZERO(fstat(memfd_, &sb));
+
+  map_size_ = sb.st_size;
+  shmem_ =
+      mmap(nullptr, map_size_, PROT_READ | PROT_WRITE, MAP_SHARED, memfd_, 0);
+  CHECK_NE(shmem_, MAP_FAILED);
+
+  // Avoid deadlock between agent and the task it is scheduling. This happens
+  // if both tasks (agent and non-agent) fault on the same page in shared mem
+  // concurrently. Subsequently when the page is ready then it is possible that
+  // the non-agent task is woken up first but doesn't get a chance to run
+  // because the agent (that is responsible for scheduling it) is also blocked
+  // on the same page.
+  //
+  // See b/173811264 for details.
+  CHECK_ZERO(mlock(shmem_, map_size_));
+
+  // Setup internal fields.
+  hdr_ = static_cast<InternalHeader*>(shmem_);
+  char* bytes = static_cast<char*>(shmem_);
+  data_ = bytes + kHeaderReservedBytes;
+
+  // Ensure we synchronize on the remote side marking that content is ready
+  // before trying to validate.
+  WaitForReady();
+
+  CHECK_EQ(hdr_->header_version, kHeaderVersion);
+  CHECK_EQ(hdr_->client_version, client_version);
+  CHECK_EQ(hdr_->mapping_size, map_size_);
+  CHECK_EQ(hdr_->header_size, kHeaderReservedBytes);
+  return true;
+}
+
 // static
 int GhostShmem::OpenGhostShmemFd(const char* suffix, pid_t pid) {
   std::string path = "/proc/" + std::to_string(pid) + "/fd";
@@ -203,6 +251,41 @@ int GhostShmem::OpenGhostShmemFd(const char* suffix, pid_t pid) {
   }
   return -1;
 }
+
+int GhostShmem::OpenGhostShmemFd(const char* suffix, pid_t pid, int fd_file) {
+  //std::string path_fd = "/proc/" + std::to_string(pid) + "/fd/" + std::to_string(fd_file);
+  std::string path = "/proc/" + std::to_string(pid) + "/fd";
+  std::string needle("/memfd:");
+  needle.append(kMemFdPrefix);
+  needle.append(suffix);
+  needle.append("-"+std::to_string(fd_file));
+  for (auto& f : fs::directory_iterator(path)) {
+    CHECK(fs::is_symlink(f));
+    std::string p = fs::read_symlink(f);
+    if (p.rfind(needle, 0) == 0) {
+      std::string path = fs::path(f);
+      printf("\n Path: %s \n", path.c_str());
+      int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+      CHECK_GE(fd, 0);
+      return fd;
+    }
+  }
+  //std::string path = fs::path(path_fd);
+  //printf("\n Path: %s \n", path.c_str());
+  //int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+  //CHECK_GE(fd, 0);
+  //return fd;
+
+  /*for (auto& f : fs::directory_iterator(path)) {
+    CHECK(fs::is_symlink(f));
+    std::string p = fs::read_symlink(f);
+    if (p.rfind(needle, 0) == 0) {
+    }
+  }*/
+  return -1;
+}
+
+
 
 // static
 GhostShmem* GhostShmem::GetShmemBlob(size_t size) {

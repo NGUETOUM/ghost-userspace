@@ -471,47 +471,48 @@ void wordcount_splitter(void *data_in)
    }
 
    thread_pool_.Init(kernelSchedulers, threadWork);
-
+   printf("\n string capacity is %d \n", ghost_.table_.hdr()->st_cap);
   for (size_t k = 0; k < thread_pool_.GetGtids().size(); ++k) {
       ghost::sched_item si;
       ghost_.GetSchedItem(k, si);
       si.sid = k;
       si.wcid = kWorkClassIdentifier;
       si.gpid = thread_pool_.GetGtids()[k].id();
+      printf("\n thread id %d \n", thread_pool_.GetGtids()[k].id());
       si.flags |= SCHED_ITEM_RUNNABLE;
       ghost_.SetSchedItem(k, si);
 
       if(k == 0){
       printed_0.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_0.Notify();
     }else if(k == 1){
       printed_1.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_1.Notify();
     }else if(k == 2){
       printed_2.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_2.Notify();
     }else if(k == 3){
       printed_3.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_3.Notify();
     }else if(k == 4){
       printed_4.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_4.Notify();
     }else if(k == 5){
       printed_5.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_5.Notify();
     }else if(k == 6){
       printed_6.WaitForNotification();
-      thread_pool_.MarkExit(/*sid=*/k);
+      thread_pool_.MarkExit(/*sid=*/ k);
       wait_6.Notify();
     }
 
-    }
+  }
 
     thread_pool_.Join();
 

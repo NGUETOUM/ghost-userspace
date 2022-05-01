@@ -14,7 +14,8 @@
 
 #include "schedulers/shinjuku/shinjuku_scheduler.h"
 #include "schedulers/shinjuku/shinjuku_orchestrator.h"
-
+#include <stdlib.h>
+#include <stdio.h>
 #include "absl/strings/str_format.h"
 
 namespace ghost {
@@ -72,11 +73,12 @@ bool ShinjukuScheduler::Available(const Cpu& cpu) {
 }
 
 void ShinjukuScheduler::DumpAllTasks() {
-  fprintf(stderr, "task        state     cpu  P\n");
+  fprintf(stderr, "task        state        UnscheduleLevel      cpu  P       Runtime        id\n");
   allocator()->ForEachTask([](Gtid gtid, const ShinjukuTask* task) {
-    absl::FPrintF(stderr, "%-12s%-12s%-2d %c\n", gtid.describe(),
-                  ShinjukuTask::RunStateToString(task->run_state), task->cpu,
-                  task->prio_boost ? 'P' : '-');
+    absl::FPrintF(stderr, "%-12s%-12s%-16s     %-2d    %c    %0.2ld ms    %d\n", gtid.describe(),
+                  ShinjukuTask::RunStateToString(task->run_state), ShinjukuTask::UnscheduleLevelToString(task->unschedule_level), task->cpu,
+                  task->prio_boost ? 'P' : '-', task->status_word.runtime(), gtid.id());
+
     return true;
   });
 
@@ -121,7 +123,32 @@ void ShinjukuScheduler::HandleNewGtid(ShinjukuTask* task, pid_t tgid) {
 
   if (orchs_.find(tgid) == orchs_.end()) {
     auto orch = std::make_shared<ShinjukuOrchestrator>();
-    if (!orch->Init(tgid)) {
+
+    //Read file in /tmp/ghost_fd.txt
+    pid_t main_pid = -1;
+    int main_fd = -1;
+    int index = 0;
+    FILE* fp = NULL;
+    fp = fopen("/tmp/ghost_fd.txt","r");
+    int pid = -1;
+    int fd = -1;
+
+    if (fp != NULL){
+        while (fscanf(fp, "%d %d", &pid, &fd) != EOF){
+            if(index == 0){
+              main_pid = (pid_t)pid;
+            }
+            if((pid_t)pid == tgid){
+              main_fd = fd;
+            }
+          index++;
+        }
+        fclose(fp);
+    }
+
+    printf("\n MAIN PID %d | FD %d \n", main_pid, main_fd);
+
+    if (!orch->Init(/*tgid*/ main_pid)) {
       // If the task's group leader has already exited and closed the PrioTable
       // fd while we are handling TaskNew, it is possible that we cannot find
       // the PrioTable.
@@ -132,6 +159,7 @@ void ShinjukuScheduler::HandleNewGtid(ShinjukuTask* task, pid_t tgid) {
       task->sp = &dummy_sp;
       return;
     }
+
     auto pair = std::make_pair(tgid, std::move(orch));
     orchs_.insert(std::move(pair));
   }
@@ -151,6 +179,16 @@ void ShinjukuScheduler::UpdateTaskRuntime(ShinjukuTask* task,
   }
 }
 
+ShinjukuTask* ShinjukuScheduler::findElement(uint32_t sid){
+    for (auto & elem : tasks_table){
+       absl::FPrintF(stderr, "\n On a table %d    %d \n", sid, elem.first);
+       if(sid == elem.first){
+         return elem.second;
+       }
+    }
+    return nullptr;
+}
+
 void ShinjukuScheduler::TaskNew(ShinjukuTask* task, const Message& msg) {
   const ghost_msg_payload_task_new* payload =
       static_cast<const ghost_msg_payload_task_new*>(msg.payload());
@@ -165,7 +203,9 @@ void ShinjukuScheduler::TaskNew(ShinjukuTask* task, const Message& msg) {
 
   const Gtid gtid(payload->gtid);
   const pid_t tgid = gtid.tgid();
+
   HandleNewGtid(task, tgid);
+
   if (payload->runnable) Enqueue(task);
 
   num_tasks_++;
@@ -184,19 +224,20 @@ void ShinjukuScheduler::TaskNew(ShinjukuTask* task, const Message& msg) {
     // in the runqueue).
     task->orch->GetSchedParams(task->gtid, kSchedCallbackFunc);
   }
+
+  tasks_table.emplace_back(num_sid_, task);
+  num_sid_++;
 }
 
 void ShinjukuScheduler::TaskRunnable(ShinjukuTask* task, const Message& msg) {
   const ghost_msg_payload_task_wakeup* payload =
       static_cast<const ghost_msg_payload_task_wakeup*>(msg.payload());
-
   CHECK(task->blocked());
 
   // A non-deferrable wakeup gets the same preference as a preempted task.
   // This is because it may be holding locks or resources needed by other
   // tasks to make progress.
   task->prio_boost = !payload->deferrable;
-
   Enqueue(task, /* back = */ false);
 }
 
@@ -213,7 +254,7 @@ void ShinjukuScheduler::TaskDead(ShinjukuTask* task, const Message& msg) {
 void ShinjukuScheduler::TaskBlocked(ShinjukuTask* task, const Message& msg) {
   const ghost_msg_payload_task_blocked* payload =
       reinterpret_cast<const ghost_msg_payload_task_blocked*>(msg.payload());
-
+  //absl::FPrintF(stderr, "\n On TaskBlocked Function \n");
   DCHECK_EQ(payload->runtime, task->status_word.runtime());
 
   // States other than the typical kOnCpu are possible here:
@@ -313,7 +354,6 @@ void ShinjukuScheduler::Yield(ShinjukuTask* task) {
 
 void ShinjukuScheduler::Unyield(ShinjukuTask* task) {
   CHECK(task->yielding());
-
   auto it = std::find(yielding_tasks_.begin(), yielding_tasks_.end(), task);
   CHECK(it != yielding_tasks_.end());
   yielding_tasks_.erase(it);
@@ -370,7 +410,6 @@ ShinjukuTask* ShinjukuScheduler::Peek() {
 
 void ShinjukuScheduler::RemoveFromRunqueue(ShinjukuTask* task) {
   CHECK(task->queued());
-
   for (auto& [qos, rq] : run_queue_) {
     for (int pos = rq.size() - 1; pos >= 0; pos--) {
       // The [] operator for 'std::deque' is constant time
@@ -388,7 +427,6 @@ void ShinjukuScheduler::RemoveFromRunqueue(ShinjukuTask* task) {
 void ShinjukuScheduler::UnscheduleTask(ShinjukuTask* task) {
   CHECK_NE(task, nullptr);
   CHECK(task->oncpu());
-
   // Preempt `cpu` while ensuring that the transaction is committed on
   // the uber agent CPU (see `COMMIT_AT_TXN_COMMIT` below).
   Cpu cpu = topology()->cpu(task->cpu);
@@ -428,6 +466,12 @@ void ShinjukuScheduler::SchedParamsCallback(ShinjukuOrchestrator& orch,
   }
 
   ShinjukuTask* task = allocator()->GetTask(gtid);
+
+  if(!task){
+    task = findElement(sp->sid_);
+  }
+
+
   if (!task) {
     // We are too early (i.e. haven't seen MSG_TASK_NEW for gtid) in which
     // case ignore the update for now. We'll grab the latest ShinjukuSchedParams
@@ -603,6 +647,7 @@ bool ShinjukuScheduler::SkipForSchedule(int iteration, const Cpu& cpu) {
 
 void ShinjukuScheduler::GlobalSchedule(const StatusWord& agent_sw,
                                        StatusWord::BarrierToken agent_sw_last) {
+
   // List of CPUs with open transactions.
   CpuList open_cpus = MachineTopology()->EmptyCpuList();
   const absl::Time now = absl::Now();
@@ -623,7 +668,7 @@ void ShinjukuScheduler::GlobalSchedule(const StatusWord& agent_sw,
         // runqueue lock, so calling this for tasks on many CPUs harms tail
         // latency.
         absl::Duration elapsed_runtime = now - cs->current->last_ran;
-
+        //absl::FPrintF(stderr, "\n In GlobalSchedule Function \n");
         // Preempt the current task if either:
         // 1. A higher-priority task wants to run.
         // 2. The next task to run has the same priority as the current task,
@@ -882,9 +927,10 @@ void ShinjukuAgent::AgentThread() {
     if (cpu().id() != global_scheduler_->GetGlobalCPUId()) {
       RunRequest* req = enclave()->GetRunRequest(cpu());
 
-    /*  if (verbose() > 1) {
+      if (verbose() > 1) {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
-      }*/
+      }
+
       req->LocalYield(agent_barrier, /*flags=*/0);
     } else {
       if (boosted_priority()) {

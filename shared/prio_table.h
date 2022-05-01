@@ -106,6 +106,7 @@ class PrioTable {
   ~PrioTable();
 
   bool Attach(pid_t remote);
+  bool Attach(pid_t remote, int fd);
 
   struct sched_item* sched_item(int i) const;
   struct work_class* work_class(int i) const;

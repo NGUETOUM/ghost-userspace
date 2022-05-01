@@ -83,6 +83,18 @@ bool PrioTable::Attach(pid_t remote) {
   return true;
 }
 
+bool PrioTable::Attach(pid_t remote, int fd) {
+  shmem_ = std::make_unique<GhostShmem>();
+  const bool ret =
+      shmem_->Attach(kPrioTableVersion, kPrioTableShmemName, remote, fd);
+  if (!ret) {
+    return ret;
+  }
+  hdr_ = reinterpret_cast<struct legorch_shmem_hdr*>(shmem_->bytes());
+  CHECK_GE(shmem_->size(), hdr_->maplen);  // Paranoia.
+  return true;
+}
+
 PrioTable::~PrioTable() {}
 
 struct ghost::PrioTable::stream* PrioTable::stream() {

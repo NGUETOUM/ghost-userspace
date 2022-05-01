@@ -57,6 +57,7 @@ void ShinjukuOrchestrator::RefreshSchedParams(
   // a full stream. Additionally, if there are multiple overflows, the first
   // overflow will be picked up here and subsequent overflows will be handled in
   // future calls to this function.
+
   for (uint32_t i = 0; i < table_.hdr()->st_cap; i++) {
     updatedIndex = table_.NextUpdatedIndex();
     if (updatedIndex >= 0 && updatedIndex < num_sched_items_) {
@@ -117,6 +118,16 @@ void ShinjukuOrchestrator::MakeEngineRunnable(const ShinjukuSchedParams* sp) {
 
 bool ShinjukuOrchestrator::Init(pid_t remote) {
   bool ret = table_.Attach(remote);
+  if (ret) {
+    num_sched_items_ = table_.NumSchedItems();
+    num_work_classes_ = table_.NumWorkClasses();
+    cachedsids_ = absl::make_unique<ShinjukuSchedParams[]>(num_sched_items_);
+  }
+  return ret;
+}
+
+bool ShinjukuOrchestrator::Init(pid_t remote, int fd) {
+  bool ret = table_.Attach(remote, fd);
   if (ret) {
     num_sched_items_ = table_.NumSchedItems();
     num_work_classes_ = table_.NumWorkClasses();

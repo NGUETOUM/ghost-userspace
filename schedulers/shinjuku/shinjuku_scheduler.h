@@ -116,6 +116,22 @@ struct ShinjukuTask : public Task {
     return os;
   }
 
+  static std::string_view UnscheduleLevelToString(ShinjukuTask::UnscheduleLevel unschedule_level) {
+    switch (unschedule_level) {
+      case ShinjukuTask::UnscheduleLevel::kNoUnschedule:
+        return "kNoUnschedule";
+      case ShinjukuTask::UnscheduleLevel::kCouldUnschedule:
+        return "kCouldUnschedule";
+      case ShinjukuTask::UnscheduleLevel::kMustUnschedule:
+        return "kMustUnschedule";
+        // We will get a compile error if a new member is added to the
+        // `ShinjukuTask::UnscheduleLevel` enum and a corresponding case is not added
+        // here.
+    }
+    CHECK(false);
+    return "Unknown unschedule level";
+  }
+
   RunState run_state = RunState::kBlocked;
   int cpu = -1;
 
@@ -216,6 +232,11 @@ class ShinjukuScheduler : public BasicDispatchScheduler<ShinjukuTask> {
 
   static constexpr int kDebugRunqueue = 1;
 
+
+  std::vector<std::pair<int,ShinjukuTask*>> tasks_table;
+  ShinjukuTask* findElement(uint32_t sid);
+
+
  private:
   struct CpuState {
     ShinjukuTask* current = nullptr;
@@ -303,6 +324,7 @@ class ShinjukuScheduler : public BasicDispatchScheduler<ShinjukuTask> {
   std::atomic<int32_t> global_cpu_;
   Channel global_channel_;
   int num_tasks_ = 0;
+  int num_sid_ = 0;
   bool in_discovery_ = false;
 
   // Map from QoS level to runqueue

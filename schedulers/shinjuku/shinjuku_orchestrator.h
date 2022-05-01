@@ -102,7 +102,7 @@ class ShinjukuSchedParams {
     return true;
   }
 
- private:
+ //private:
   uint32_t sid_;       // sched item ID
   uint32_t wcid_;      // unique identifier for work class
   uint64_t gpid_;      // unique identifier for thread
@@ -128,7 +128,7 @@ class ShinjukuOrchestrator {
 
   // Attaches to the shared PrioTable belonging to the scheduled process.
   bool Init(pid_t remote);
-
+  bool Init(pid_t remote, int fd);
   uint32_t NumWorkClasses() { return num_work_classes_; }
 
   // Prints all cached ShinjukuSchedParams.
@@ -166,6 +166,7 @@ class ShinjukuOrchestrator {
   // corresponding to the engine along with in the live PrioTable sched item
   // corresponding to the engine.
   void MakeEngineRunnable(const ShinjukuSchedParams* sp);
+
 
  private:
   // Copies the options for the sched item corresponding to 'sid' out of the
