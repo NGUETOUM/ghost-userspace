@@ -467,6 +467,7 @@ void ShinjukuScheduler::SchedParamsCallback(ShinjukuOrchestrator& orch,
 
   ShinjukuTask* task = allocator()->GetTask(gtid);
 
+
   if(!task){
     task = findElement(sp->sid_);
   }
@@ -927,9 +928,9 @@ void ShinjukuAgent::AgentThread() {
     if (cpu().id() != global_scheduler_->GetGlobalCPUId()) {
       RunRequest* req = enclave()->GetRunRequest(cpu());
 
-      if (verbose() > 1) {
+      /*if (verbose() > 1) {
         printf("Agent on cpu: %d Idled.\n", cpu().id());
-      }
+      }*/
 
       req->LocalYield(agent_barrier, /*flags=*/0);
     } else {

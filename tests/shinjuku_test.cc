@@ -23,7 +23,7 @@
 
 
 #include "absl/synchronization/notification.h"
-#include "experiments/shared/ghost.h"
+#include "experiments/shared/prio_table_helper.h"
 #include "experiments/shared/thread_pool.h"
 #include "lib/base.h"
 #include "lib/ghost.h"
@@ -290,7 +290,7 @@ int default_partition(int reduce_tasks, void* key, int key_size);
 
 //INITIALIZE GLOBALS VARIABLES TO MANAGE THREADS ON A PRIOTABLE
 
-ghost_test::Ghost ghost_(7, 7);
+ghost_test::PrioTableHelper prioTableHelper_(7, 7);
 ghost_test::ExperimentThreadPool thread_pool_(7);
 std::vector<ghost::GhostThread::KernelScheduler> kernelSchedulers(
     7, ghost::GhostThread::KernelScheduler::kGhost);
@@ -471,16 +471,16 @@ void wordcount_splitter(void *data_in)
    }
 
    thread_pool_.Init(kernelSchedulers, threadWork);
-   printf("\n string capacity is %d \n", ghost_.table_.hdr()->st_cap);
+   printf("\n string capacity is %d \n", prioTableHelper_.table_.hdr()->st_cap);
   for (size_t k = 0; k < thread_pool_.GetGtids().size(); ++k) {
       ghost::sched_item si;
-      ghost_.GetSchedItem(k, si);
+      prioTableHelper_.GetSchedItem(k, si);
       si.sid = k;
       si.wcid = kWorkClassIdentifier;
       si.gpid = thread_pool_.GetGtids()[k].id();
       printf("\n thread id %d \n", thread_pool_.GetGtids()[k].id());
       si.flags |= SCHED_ITEM_RUNNABLE;
-      ghost_.SetSchedItem(k, si);
+      prioTableHelper_.SetSchedItem(k, si);
 
       if(k == 0){
       printed_0.WaitForNotification();

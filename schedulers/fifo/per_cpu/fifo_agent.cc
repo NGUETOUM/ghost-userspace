@@ -23,7 +23,7 @@
 #include "schedulers/fifo/per_cpu/fifo_scheduler.h"
 
 ABSL_FLAG(int32_t, firstcpu, 0, "First cpu to start scheduling from.");
-ABSL_FLAG(int32_t, ncpus, 4, "Schedule on <ncpus> starting from <firstcpu>");
+ABSL_FLAG(int32_t, ncpus, 1, "Schedule on <ncpus> starting from <firstcpu>");
 ABSL_FLAG(std::string, enclave, "", "Connect to preexisting enclave directory");
 
 namespace ghost {
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
   absl::InitializeSymbolizer(argv[0]);
 
   // Override default value of the verbose flag while in active development.
-  ghost::set_verbose(1);
+  ghost::set_verbose(3);
   absl::ParseCommandLine(argc, argv);
 
   ghost::AgentConfig config;

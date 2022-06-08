@@ -26,7 +26,7 @@
 #include "lib/topology.h"
 #include "schedulers/fifo/centralized/fifo_scheduler.h"
 
-ABSL_FLAG(std::string, ghost_cpus, "1-5", "cpulist");
+ABSL_FLAG(std::string, ghost_cpus, "0-1", "cpulist");
 ABSL_FLAG(int32_t, globalcpu, -1,
           "Global cpu. If -1, then defaults to the first cpu in <cpus>");
 
@@ -55,7 +55,7 @@ void ParseFifoConfig(FifoConfig* config) {
 
 int main(int argc, char* argv[]) {
   absl::InitializeSymbolizer(argv[0]);
-
+  ghost::set_verbose(3);
   absl::ParseCommandLine(argc, argv);
 
   ghost::FifoConfig config;

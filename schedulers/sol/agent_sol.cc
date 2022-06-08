@@ -26,7 +26,7 @@
 #include "lib/topology.h"
 #include "schedulers/sol/sol_scheduler.h"
 
-ABSL_FLAG(std::string, ghost_cpus, "0-3", "cpulist");
+ABSL_FLAG(std::string, ghost_cpus, "0-1", "cpulist");
 ABSL_FLAG(int32_t, globalcpu, 0,
           "Global cpu. If -1, then defaults to the first cpu in <cpus>");
 
@@ -55,7 +55,7 @@ void ParseSolConfig(SolConfig* config) {
 
 int main(int argc, char* argv[]) {
   absl::InitializeSymbolizer(argv[0]);
-  ghost::set_verbose(1);
+  ghost::set_verbose(3);
   absl::ParseCommandLine(argc, argv);
 
   ghost::SolConfig config;

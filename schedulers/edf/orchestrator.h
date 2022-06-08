@@ -93,7 +93,7 @@ class SchedParams {
     return true;
   }
 
- private:
+ //private:
   uint32_t sid_;
   uint32_t wcid_;   // unique identifier for work class
   uint64_t gpid_;   // unique identifier for thread

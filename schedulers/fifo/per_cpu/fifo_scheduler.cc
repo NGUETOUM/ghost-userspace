@@ -394,9 +394,9 @@ std::unique_ptr<FifoScheduler> MultiThreadedFifoScheduler(Enclave* enclave,
 
 void FifoAgent::AgentThread() {
   gtid().assign_name("Agent:" + std::to_string(cpu().id()));
-  if (verbose() > 1) {
+  /*if (verbose() > 1) {
     printf("Agent tid:=%d\n", gtid().tid());
-  }
+  }*/
   SignalReady();
   WaitForEnclaveReady();
 

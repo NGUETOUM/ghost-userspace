@@ -208,6 +208,9 @@ class EdfScheduler : public BasicDispatchScheduler<EdfTask> {
 
   static const int kDebugRunqueue = 1;
 
+  std::vector<std::pair<int,EdfTask*>> tasks_table;
+  EdfTask* findElement(uint32_t sid);
+
  private:
   bool PreemptTask(EdfTask* prev, EdfTask* next,
                    StatusWord::BarrierToken agent_barrier);
@@ -239,6 +242,7 @@ class EdfScheduler : public BasicDispatchScheduler<EdfTask> {
   std::atomic<int32_t> global_cpu_;
   Channel global_channel_;
   int num_tasks_ = 0;
+  int num_sid_ = 0;
   bool in_discovery_ = false;
   // Heapified runqueue
   std::vector<EdfTask*> run_queue_;
